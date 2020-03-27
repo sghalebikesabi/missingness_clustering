@@ -14,7 +14,7 @@ def parse_args():
     '''
     parser = argparse.ArgumentParser(description="Run node2vec.")
     
-    parser.add_argument('--input', nargs='?', default='/home/ghalebik/Projects/missingness_clustering/data/', help='Input data frame path')
+    parser.add_argument('--input', nargs='?', default='/home/ghalebik/Projects/missingness_clustering/data/X.simulated', help='Input data frame path')
     
     parser.add_argument('--k', type=int, nargs='?', default=2, help='Number of missigness clusters')
 
@@ -37,16 +37,21 @@ def main(args):
     args.k = 3
     args.tol = 10**(-6)
     '''
+
+    # load data
     with open(args.input, 'rb') as file: 
         X = pkl.load(file)
     
+    # determine if data is simulated
     simulated = False
     if args.input.split('.')[-1] == 'simulated':
         simulated = True
 
+    # run EM algorithm
     pi, pC, gamma, C, niter = EM_clustering(X, args.k, args.tol, simulated)
-
-    print('Squared binary loss:', np.mean(C != X['C']))
+    
+    # train VAEs
+    Z = clustered_VAE(X, C)
 
 if __name__ == "__main__":
 	args = parse_args()
