@@ -7,12 +7,20 @@ class test:
         self.__dict__.update(kwds)
 
 args = test
-args.input = '/home/ghalebik/Projects/missingness_clustering/data/X.simulated'
-args.k = 3
+args.cuda = False
+args.no_cuda = True
+args.input = '/home/ghalebik/Projects/missingness_clustering/data/X_n10000_m5_k2.simulated'
+args.k = 2
 args.tol = 10**6
+args.train_percentages = 0.8
+args.batch_size = 128
+args.epochs = 10
 
+args.distinct_hdim=[[400],[400]]
+args.commonencoder_hdim=[[20,20]]
+args.decoder_hdim=[400]
 
-args.input='/home/ghalebik/Projects/missingness_clustering/data/'##='Input data frame path')
+#args.input='/home/ghalebik/Projects/missingness_clustering/data/'##='Input data frame path')
     
 args.n=20#='Number of observations')
 

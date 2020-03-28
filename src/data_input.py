@@ -1,5 +1,7 @@
 '''
 This file creates/processes the data input for the algorithm
+run with:
+    python src/data_input.py --n 100000 --m 150 --k 2
 '''
 
 import argparse

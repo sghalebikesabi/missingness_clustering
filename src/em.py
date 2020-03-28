@@ -53,8 +53,9 @@ def EM_clustering(X, k, tol, simulated=False, seed=3434):
          
     C = [np.argmax(tr_gamma[i]) for i in range(n)]
 
+
     plt.plot(loss)
-    plt.show()
+    plt.show(block=False)
 
     return(pi[-1], pC[-1], gamma, C, niter)
 

@@ -1,53 +1,20 @@
-from __future__ import print_function
-import argparse
+'''
+This file builds a VAE model which allows for different encoder structures for different clusters
+This code makes use of the repo https://github.com/pytorch/examples/tree/master/vae
+'''
+
 import numpy as np
 import torch
 import torch.utils.data
-from torch import nn, optim
+from torch import optim, nn
 from torch.nn import functional as F
 from torchvision import datasets, transforms
 from torchvision.utils import save_image
 
 
-parser = argparse.ArgumentParser(description='VAE MNIST Example')
-parser.add_argument('--k', type=int, default=2, metavar='N',
-                    help='number of clusters')
-parser.add_argument('--batch-size', type=int, default=128, metavar='N',
-                    help='input batch size for training (default: 128)')
-parser.add_argument('--epochs', type=int, default=10, metavar='N',
-                    help='number of epochs to train (default: 10)')
-parser.add_argument('--no-cuda', action='store_true', default=False,
-                    help='enables CUDA training')
-parser.add_argument('--seed', type=int, default=1, metavar='S',
-                    help='random seed (default: 1)')
-parser.add_argument('--log-interval', type=int, default=10, metavar='N',
-                    help='how many batches to wait before logging training status')
-args = parser.parse_args()
-args.cuda = not args.no_cuda and torch.cuda.is_available()
-
-torch.manual_seed(args.seed)
-
-device = torch.device("cuda" if args.cuda else "cpu")
-
-kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
-train_loader = torch.utils.data.DataLoader(
-    datasets.MNIST('../data', train=True, download=True,
-                   transform=transforms.ToTensor()),
-    batch_size=args.batch_size, shuffle=True, **kwargs)
-test_loader = torch.utils.data.DataLoader(
-    datasets.MNIST('../data', train=False, transform=transforms.ToTensor()),
-    batch_size=args.batch_size, shuffle=True, **kwargs)
-
-n_train = len(train_loader)*args.batch_size
-n_test = len(test_loader)*args.batch_size
-pC = np.random.uniform(size=args.k)
-pC = pC/np.sum(pC)
-C_train = torch.from_numpy(np.random.choice(np.arange(args.k), n_train, list(pC)))
-C_test = torch.from_numpy(np.random.choice(np.arange(args.k), n_test, list(pC)))
-
-class VAE(nn.Module):
+class clustered_VAE(nn.Module):
     def __init__(self, input_dim, k=2, distinct_hdim=[[400],[400]], commonencoder_hdim=[[20,20]], decoder_hdim=[400]):
-        super(VAE, self).__init__()
+        super(clustered_VAE, self).__init__()
         
         # create attributes needed for the encoder
         self.n_distinctlayers = [len(distinct_hdim[i]) for i in range(len(distinct_hdim))]
@@ -55,6 +22,7 @@ class VAE(nn.Module):
         self.distinct_hdim = distinct_hdim
         self.n_encoderlayers = np.sum(self.n_distinctlayers) + len(commonencoder_hdim)
         self.k = k
+        self.input_dim = input_dim
         self.layers = nn.ModuleList()
         
         # add layers distinctive to each cluster
@@ -117,12 +85,9 @@ class VAE(nn.Module):
         return z
 
     def forward(self, x):
-        mu, logvar = self.encode(x['x'].view(-1, 784), x['C'])
+        mu, logvar = self.encode(x['x'].view(-1, self.input_dim), x['C'])
         z = self.reparameterize(mu, logvar)
         return self.decode(z), mu, logvar
-
-model = VAE(input_dim=784,k=args.k).to(device)
-optimizer = optim.Adam(model.parameters(), lr=1e-3)
 
 
 # Reconstruction + KL divergence losses summed over all elements and batch
@@ -138,17 +103,20 @@ def loss_function(recon_x, x, mu, logvar):
     return BCE + KLD
 
 
-def train(epoch):
+def train(model, epoch, C_train, train_loader, args):
+    device = torch.device("cuda" if args.cuda else "cpu")
+    torch.manual_seed(args.seed)
+    optimizer = optim.Adam(model.parameters(), lr=1e-3)
     model.train()
     train_loss = 0
-    for batch_idx, (data, _) in enumerate(train_loader):
+    for batch_idx, (data) in enumerate(train_loader):
         # load data
         data = data.to(device)
         batched_C_train = C_train[(batch_idx*args.batch_size):(batch_idx*args.batch_size+len(data))]
         optimizer.zero_grad()
         # sort input obserations according to clusters
         argsort_batched_C_train = np.argsort(batched_C_train)
-        batched_C_train = batched_C_train[argsort_batched_C_train]
+        batched_C_train = [batched_C_train[argsort_batched_C_train[i]] for i in range(len(argsort_batched_C_train))]
         data = data[argsort_batched_C_train]
         data_C = {'x': data, 'C': batched_C_train}
         # train model
@@ -166,8 +134,10 @@ def train(epoch):
     print('====> Epoch: {} Average loss: {:.4f}'.format(
           epoch, train_loss / len(train_loader.dataset)))
 
+    return(model)
 
-def test(epoch):
+
+def test(model, epoch, C_test, test_loader):
     model.eval()
     test_loss = 0
     with torch.no_grad():
@@ -194,14 +164,3 @@ def test(epoch):
 
     test_loss /= len(test_loader.dataset)
     print('====> Test set loss: {:.4f}'.format(test_loss))
-
-
-if __name__ == "__main__":
-    for epoch in range(1, args.epochs + 1):
-        train(epoch)
-        test(epoch)
-        with torch.no_grad():
-            sample = torch.randn(64, 20).to(device)
-            sample = model.decode(sample).cpu()
-            save_image(sample.view(64, 1, 28, 28),
-                       'results/sample_' + str(epoch) + '.png')
