@@ -12,6 +12,31 @@ from torchvision import datasets, transforms
 from torchvision.utils import save_image
 
 
+class missingness_dataset(torch.utils.data.Dataset):
+    """Missingness dataset class."""
+
+    def __init__(self, data, C, missingness):
+        """
+        Args:
+            data: Imputed dataset.
+            C: Onedimensional tensor of length equal to length of data .
+            missingness: Tensor of same shape as data.
+        """
+        self.data = data
+        self.C = C
+        self.missingness = missingness
+
+    def __len__(self):
+        return len(self.data)
+
+    def __getitem__(self, idx):
+        if torch.is_tensor(idx):
+            idx = idx.tolist()
+        sample = self.data[idx], self.C[idx], self.missingness[idx]
+
+        return sample
+
+
 class clustered_VAE(nn.Module):
     def __init__(self, input_dim, k=2, distinct_hdim=[[400],[400]], commonencoder_hdim=[[20,20]], decoder_hdim=[400]):
         super(clustered_VAE, self).__init__()
@@ -91,28 +116,28 @@ class clustered_VAE(nn.Module):
 
 
 # Reconstruction + KL divergence losses summed over all elements and batch
-def loss_function(recon_x, x, mu, logvar):
-    BCE = F.binary_cross_entropy(recon_x, x.view(-1, x.shape[1]), reduction='sum')
+def masked_loss_function(recon_x, x, mu, logvar, mask):
+    BCE = F.binary_cross_entropy(recon_x, x.view(-1, x.shape[1]), reduction='sum', weight=mask.float())
+    #BCE = F.binary_cross_entropy(
+     #   recon_x.masked_fill_(mask, 0), 
+      #  x.view(-1, x.shape[1]).masked_fill_(mask, 0), 
+       # reduction='sum')
 
-    # see Appendix B from VAE paper:
-    # Kingma and Welling. Auto-Encoding Variational Bayes. ICLR, 2014
-    # https://arxiv.org/abs/1312.6114
     # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
     KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
 
     return BCE + KLD
 
 
-def train(model, C_train, train_loader, C_test, test_loader, device, args):
+def train(model, train_loader, test_loader, device, args):
     torch.manual_seed(args.seed)
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
     for epoch in range(1, args.epochs + 1):
         model.train()
         train_loss = 0
-        for batch_idx, (data_iter) in enumerate(train_loader):
+        for batch_idx, (data_iter, batched_C_train, missingness) in enumerate(train_loader):
             # load data
             data_iter = data_iter.to(device)
-            batched_C_train = C_train[(batch_idx*args.batch_size):(batch_idx*args.batch_size+len(data_iter))]
             optimizer.zero_grad()
             # sort input obserations according to clusters
             argsort_batched_C_train = np.argsort(batched_C_train)
@@ -121,7 +146,7 @@ def train(model, C_train, train_loader, C_test, test_loader, device, args):
             data_C = {'x': data_iter, 'C': batched_C_train}
             # train model
             recon_batch, mu, logvar = model(data_C)
-            loss = loss_function(recon_batch.float(), data_iter.float(), mu.float(), logvar.float())
+            loss = masked_loss_function(recon_batch.float(), data_iter.float(), mu.float(), logvar.float(), missingness)
             loss.backward()
             train_loss += loss.item()
             optimizer.step()
@@ -133,7 +158,7 @@ def train(model, C_train, train_loader, C_test, test_loader, device, args):
 
         print('====> Epoch: {} Average loss: {:.4f}'.format(
             epoch, train_loss / len(train_loader.dataset)))
-        test(model, epoch, C_test, test_loader, device, args)
+        test(model, epoch, test_loader, device, args)
         if args.images == True:
             with torch.no_grad():
                 sample = torch.randn(64, 20).to(device)
@@ -143,23 +168,22 @@ def train(model, C_train, train_loader, C_test, test_loader, device, args):
     return(model)
 
 
-def test(model, epoch, C_test, test_loader, device, args):
-    model.eval()
+def test(model, epoch, test_loader, device, args):
+    model.eval() 
     test_loss = 0
     with torch.no_grad():
-        for i, (data) in enumerate(test_loader): # change to (data, _) for labelled data
+        for i, (data_iter, batched_C_test, missingness) in enumerate(test_loader): # change to (data, _) for labelled data
             # load data 
             if i==0:
-                old_len_data = len(data)
+                old_len_data = len(data_iter)
             data = data.to(device)
             # sort data observations according to cluster
-            batched_C_test = C_test[(i*old_len_data):(i*old_len_data+len(data))]
             argsort_batched_C_test = np.argsort(batched_C_test)
             batched_C_test = torch.tensor([batched_C_test[argsort_batched_C_test[i]] for i in range(len(argsort_batched_C_test))])
             data = data[argsort_batched_C_test]
             data_C = {'x': data, 'C': batched_C_test}
             recon_batch, mu, logvar = model(data_C)
-            test_loss += loss_function(recon_batch.float(), data.float(), mu.float(), logvar.float()).item()
+            test_loss += masekd_loss_function(recon_batch.float(), data.float(), mu.float(), logvar.float(), missingness).item()
             if args.images == True:
                 if i == 0:
                     n = min(data.size(0), 8)
@@ -167,7 +191,7 @@ def test(model, epoch, C_test, test_loader, device, args):
                                         recon_batch.view(args.batch_size, 1, args.images_dim[0], args.images_dim[1])[:n]])
                     save_image(comparison.cpu(),
                             'results/reconstruction_' + str(epoch) + '.png', nrow=n)
-            old_len_data = len(data)
+            old_len_data = len(data_iter)
 
     test_loss /= len(test_loader.dataset)
     print('====> Test set loss: {:.4f}'.format(test_loss))

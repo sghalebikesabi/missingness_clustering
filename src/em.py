@@ -56,5 +56,5 @@ def EM_clustering(X, k, tol, simulated=False, seed=3434):
     #plt.plot(loss)
     #plt.show()
 
-    return(pi[-1], pC[-1], gamma, C, niter)
+    return(pi[-1], pC[-1], gamma, C, M, niter)
 

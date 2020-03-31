@@ -3,13 +3,14 @@ This file computes the latent features according to the method presented in repo
 '''
 import argparse
 import numpy as np
+from sklearn import preprocessing
 import torch
 import pandas as pd
 import pickle as pkl
 import warnings
 
 from em import EM_clustering
-from vae import clustered_VAE, train, test
+from vae import clustered_VAE, train, test, missingness_dataset
 
 
 def parse_args():
@@ -78,7 +79,7 @@ def main(args):
     old_indices = data.index
 
     # run EM algorithm
-    pi, pC, gamma, C, niter = EM_clustering(X, args.k, args.tol, simulated)
+    pi, pC, gamma, C, M, niter = EM_clustering(X, args.k, args.tol, simulated)
 
     # mean imputation within clusters
     data2 = pd.DataFrame(columns=data.columns)
@@ -87,23 +88,32 @@ def main(args):
 
     data = data2.iloc[old_indices]
 
+    # normalize data
+    min_max_scaler = preprocessing.MinMaxScaler()
+    data_scaled = min_max_scaler.fit_transform(data.values)
+    data = pd.DataFrame(data_scaled)
+
+    # transform data into DataLoader
+    data_train = torch.tensor(data.iloc[:int(args.train_percentages*len(data))].values)
+    data_test = torch.tensor(data.iloc[int(args.train_percentages*len(data)):].values)
+    C_train = torch.tensor(C[:int(args.train_percentages*len(data))])
+    C_test = torch.tensor(C[int(args.train_percentages*len(data)):])
+    M_train = torch.tensor(M[:int(args.train_percentages*len(data)),:])
+    M_test = torch.tensor(M[int(args.train_percentages*len(data)):,:])
+
+    train_loader = torch.utils.data.DataLoader(missingness_dataset(data_train, C_train, M_train), 
+                        batch_size=args.batch_size, shuffle=True, **kwargs)
+    test_loader = torch.utils.data.DataLoader(missingness_dataset(data_test, C_test, M_test),
+                        batch_size=args.batch_size, shuffle=True, **kwargs)
 
     # create VAE model
     device = torch.device("cuda" if args.cuda else "cpu")
-
-    train_loader = torch.utils.data.DataLoader(torch.tensor(data.iloc[:int(args.train_percentages*len(data))].values), 
-                        batch_size=args.batch_size, shuffle=True, **kwargs)
-    test_loader = torch.utils.data.DataLoader(torch.tensor(data.iloc[int(args.train_percentages*len(data)):].values),
-                        batch_size=args.batch_size, shuffle=True, **kwargs)
-
-    C_train = C[:int(args.train_percentages*len(data))]
-    C_test = C[int(args.train_percentages*len(data)):]
-    
+   
     model = clustered_VAE(input_dim=data.shape[1], k=args.k, distinct_hdim=args.distinct_hdim, 
                             commonencoder_hdim=args.commonencoder_hdim, decoder_hdim=args.decoder_hdim).to(device)
 
     # train and test VAE
-    model = train(model, C_train, train_loader, C_test, test_loader, device, args)
+    model = train(model, train_loader, test_loader, device, args)
 
 if __name__ == "__main__":
     args = parse_args()

@@ -44,3 +44,12 @@ class self:
     def __init__(self, **kwds):
         self.__dict__.update(kwds)
 self.k = args.k
+
+import inspect
+lines = inspect.getsource(F.binary_cross_entropy)
+print(lines)
+
+
+x = torch.randn(3, 4)
+mask = x.ge(0.5)
+x.masked_fill_(mask,0)
