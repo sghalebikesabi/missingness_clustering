@@ -47,7 +47,7 @@ class clustered_VAE(nn.Module):
 
     def encode(self, x, C):
         # create list of list of tensors for saving results of each distinct layer in a list 
-        y = [[x[C==l,:]] for l in range(self.k) if len(x[C==l,:])>0]
+        y = [[x[C==l,:].float()] for l in range(self.k) if len(x[C==l,:])>0]
         y_C = [l for l in range(self.k) if len(x[C==l,:])>0]
         z = []
         for i, m in enumerate(self.layers):
@@ -64,7 +64,7 @@ class clustered_VAE(nn.Module):
             # common encoder layers
             elif i < (self.n_encoderlayers-1):
                 y_com = F.relu(self.layers[i](y_com))
-            # last encoder layer
+           # last encoder layer
             elif (i == self.n_encoderlayers-1) or (i == self.n_encoderlayers):
                 z.append(self.layers[i](y_com))
         return z
@@ -92,7 +92,7 @@ class clustered_VAE(nn.Module):
 
 # Reconstruction + KL divergence losses summed over all elements and batch
 def loss_function(recon_x, x, mu, logvar):
-    BCE = F.binary_cross_entropy(recon_x, x.view(-1, 784), reduction='sum')
+    BCE = F.binary_cross_entropy(recon_x, x.view(-1, x.shape[1]), reduction='sum')
 
     # see Appendix B from VAE paper:
     # Kingma and Welling. Auto-Encoding Variational Bayes. ICLR, 2014
@@ -103,45 +103,51 @@ def loss_function(recon_x, x, mu, logvar):
     return BCE + KLD
 
 
-def train(model, epoch, C_train, train_loader, args):
-    device = torch.device("cuda" if args.cuda else "cpu")
+def train(model, C_train, train_loader, C_test, test_loader, device, args):
     torch.manual_seed(args.seed)
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
-    model.train()
-    train_loss = 0
-    for batch_idx, (data) in enumerate(train_loader):
-        # load data
-        data = data.to(device)
-        batched_C_train = C_train[(batch_idx*args.batch_size):(batch_idx*args.batch_size+len(data))]
-        optimizer.zero_grad()
-        # sort input obserations according to clusters
-        argsort_batched_C_train = np.argsort(batched_C_train)
-        batched_C_train = [batched_C_train[argsort_batched_C_train[i]] for i in range(len(argsort_batched_C_train))]
-        data = data[argsort_batched_C_train]
-        data_C = {'x': data, 'C': batched_C_train}
-        # train model
-        recon_batch, mu, logvar = model(data_C)
-        loss = loss_function(recon_batch, data, mu, logvar)
-        loss.backward()
-        train_loss += loss.item()
-        optimizer.step()
-        if batch_idx % args.log_interval == 0:
-            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
-                epoch, batch_idx * len(data), len(train_loader.dataset),
-                100. * batch_idx / len(train_loader),
-                loss.item() / len(data)))
+    for epoch in range(1, args.epochs + 1):
+        model.train()
+        train_loss = 0
+        for batch_idx, (data_iter) in enumerate(train_loader):
+            # load data
+            data_iter = data_iter.to(device)
+            batched_C_train = C_train[(batch_idx*args.batch_size):(batch_idx*args.batch_size+len(data_iter))]
+            optimizer.zero_grad()
+            # sort input obserations according to clusters
+            argsort_batched_C_train = np.argsort(batched_C_train)
+            batched_C_train = torch.tensor([batched_C_train[argsort_batched_C_train[i]] for i in range(len(argsort_batched_C_train))])
+            data_iter = data_iter[argsort_batched_C_train]
+            data_C = {'x': data_iter, 'C': batched_C_train}
+            # train model
+            recon_batch, mu, logvar = model(data_C)
+            loss = loss_function(recon_batch.float(), data_iter.float(), mu.float(), logvar.float())
+            loss.backward()
+            train_loss += loss.item()
+            optimizer.step()
+            if batch_idx % args.log_interval == 0:
+                print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}'.format(
+                    epoch, batch_idx * len(data_iter), len(train_loader.dataset),
+                    100. * batch_idx / len(train_loader),
+                    loss.item() / len(data_iter)))
 
-    print('====> Epoch: {} Average loss: {:.4f}'.format(
-          epoch, train_loss / len(train_loader.dataset)))
+        print('====> Epoch: {} Average loss: {:.4f}'.format(
+            epoch, train_loss / len(train_loader.dataset)))
+        test(model, epoch, C_test, test_loader, device, args)
+        if args.images == True:
+            with torch.no_grad():
+                sample = torch.randn(64, 20).to(device)
+                sample = model.decode(sample).cpu()
+                save_image(sample.view(64, 1, args.images_dim[0], args.image_dim[1]), 'results/sample_' + str(epoch) + '.png')
 
     return(model)
 
 
-def test(model, epoch, C_test, test_loader):
+def test(model, epoch, C_test, test_loader, device, args):
     model.eval()
     test_loss = 0
     with torch.no_grad():
-        for i, (data, _) in enumerate(test_loader):
+        for i, (data) in enumerate(test_loader): # change to (data, _) for labelled data
             # load data 
             if i==0:
                 old_len_data = len(data)
@@ -149,17 +155,18 @@ def test(model, epoch, C_test, test_loader):
             # sort data observations according to cluster
             batched_C_test = C_test[(i*old_len_data):(i*old_len_data+len(data))]
             argsort_batched_C_test = np.argsort(batched_C_test)
-            batched_C_test = batched_C_test[argsort_batched_C_test]
+            batched_C_test = torch.tensor([batched_C_test[argsort_batched_C_test[i]] for i in range(len(argsort_batched_C_test))])
             data = data[argsort_batched_C_test]
             data_C = {'x': data, 'C': batched_C_test}
             recon_batch, mu, logvar = model(data_C)
-            test_loss += loss_function(recon_batch, data, mu, logvar).item()
-            if i == 0:
-                n = min(data.size(0), 8)
-                comparison = torch.cat([data[:n],
-                                      recon_batch.view(args.batch_size, 1, 28, 28)[:n]])
-                save_image(comparison.cpu(),
-                         'results/reconstruction_' + str(epoch) + '.png', nrow=n)
+            test_loss += loss_function(recon_batch.float(), data.float(), mu.float(), logvar.float()).item()
+            if args.images == True:
+                if i == 0:
+                    n = min(data.size(0), 8)
+                    comparison = torch.cat([data[:n],
+                                        recon_batch.view(args.batch_size, 1, args.images_dim[0], args.images_dim[1])[:n]])
+                    save_image(comparison.cpu(),
+                            'results/reconstruction_' + str(epoch) + '.png', nrow=n)
             old_len_data = len(data)
 
     test_loss /= len(test_loader.dataset)

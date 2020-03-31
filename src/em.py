@@ -20,7 +20,6 @@ def EM_clustering(X, k, tol, simulated=False, seed=3434):
     n, m = M.shape
     np.random.seed(seed)
 
-
     # initialization
     pC_unnorm = list(np.random.uniform(size=k))
     pC = [pC_unnorm/np.sum(pC_unnorm)]
@@ -54,8 +53,8 @@ def EM_clustering(X, k, tol, simulated=False, seed=3434):
     C = [np.argmax(tr_gamma[i]) for i in range(n)]
 
 
-    plt.plot(loss)
-    plt.show(block=False)
+    #plt.plot(loss)
+    #plt.show()
 
     return(pi[-1], pC[-1], gamma, C, niter)
 

@@ -4,6 +4,7 @@ This file computes the latent features according to the method presented in repo
 import argparse
 import numpy as np
 import torch
+import pandas as pd
 import pickle as pkl
 import warnings
 
@@ -45,6 +46,12 @@ def parse_args():
     parser.add_argument('--train-percentages', type=float, default=0.8, metavar='N',
                         help='Percentage of data set that represents test data set')
 
+    parser.add_argument('--images', type=bool, default=False, metavar='N',
+                        help='True if input is image data')
+
+    parser.add_argument('--images-dim', type=list, default=[28, 28], metavar='N',
+                        help='If input is image data, dimension of image data')
+
     return parser.parse_args()
 
 
@@ -66,30 +73,37 @@ def main(args):
     else:
         data = X.sample(frac=1)
     kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
+
+    # save old indices to preserve order of original order
+    old_indices = data.index
+
+    # run EM algorithm
+    pi, pC, gamma, C, niter = EM_clustering(X, args.k, args.tol, simulated)
+
+    # mean imputation within clusters
+    data2 = pd.DataFrame(columns=data.columns)
+    for l in range(args.k):
+        data2 = data2.append(data.loc[np.where([c==l for c in C])].apply(lambda x: x.fillna(x.mean()), axis=0))
+
+    data = data2.iloc[old_indices]
+
+
+    # create VAE model
+    device = torch.device("cuda" if args.cuda else "cpu")
+
     train_loader = torch.utils.data.DataLoader(torch.tensor(data.iloc[:int(args.train_percentages*len(data))].values), 
                         batch_size=args.batch_size, shuffle=True, **kwargs)
     test_loader = torch.utils.data.DataLoader(torch.tensor(data.iloc[int(args.train_percentages*len(data)):].values),
                         batch_size=args.batch_size, shuffle=True, **kwargs)
 
-    # run EM algorithm
-    pi, pC, gamma, C, niter = EM_clustering(X, args.k, args.tol, simulated)
-    C_train = C[int(args.train_percentages*len(data)):]
-    C_test = C[:int(args.train_percentages*len(data))]
+    C_train = C[:int(args.train_percentages*len(data))]
+    C_test = C[int(args.train_percentages*len(data)):]
     
-    # create VAE model
-    device = torch.device("cuda" if args.cuda else "cpu")
     model = clustered_VAE(input_dim=data.shape[1], k=args.k, distinct_hdim=args.distinct_hdim, 
                             commonencoder_hdim=args.commonencoder_hdim, decoder_hdim=args.decoder_hdim).to(device)
 
     # train and test VAE
-    for epoch in range(1, args.epochs + 1):
-        model = train(model, epoch, C_train, train_loader, args)
-        test(model, epoch, C_test, test_loader)
-        with torch.no_grad():
-            sample = torch.randn(64, 20).to(device)
-            sample = model.decode(sample).cpu()
-            save_image(sample.view(64, 1, 28, 28), 'results/sample_' + str(epoch) + '.png')
-
+    model = train(model, C_train, train_loader, C_test, test_loader, device, args)
 
 if __name__ == "__main__":
     args = parse_args()
