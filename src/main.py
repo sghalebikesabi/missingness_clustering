@@ -89,13 +89,14 @@ def main(args):
     data = data2.iloc[old_indices]
 
     # normalize data
+    data_train = data.iloc[:int(args.train_percentages*len(data))].values
+    data_test = data.iloc[int(args.train_percentages*len(data)):].values
     min_max_scaler = preprocessing.MinMaxScaler()
-    data_scaled = min_max_scaler.fit_transform(data.values)
-    data = pd.DataFrame(data_scaled)
+    min_max_scaler.fit(data_train)
+    data_train = torch.tensor(min_max_scaler.transform(data_train))
+    data_test = torch.tensor(min_max_scaler.transform(data_test))
 
     # transform data into DataLoader
-    data_train = torch.tensor(data.iloc[:int(args.train_percentages*len(data))].values)
-    data_test = torch.tensor(data.iloc[int(args.train_percentages*len(data)):].values)
     C_train = torch.tensor(C[:int(args.train_percentages*len(data))])
     C_test = torch.tensor(C[int(args.train_percentages*len(data)):])
     M_train = torch.tensor(M[:int(args.train_percentages*len(data)),:])
