@@ -44,6 +44,9 @@ class self:
     def __init__(self, **kwds):
         self.__dict__.update(kwds)
 self.k = args.k
+self.input_dim = 150
+input_dim = 150
+
 
 import inspect
 lines = inspect.getsource(F.binary_cross_entropy)
@@ -53,3 +56,50 @@ print(lines)
 x = torch.randn(3, 4)
 mask = x.ge(0.5)
 x.masked_fill_(mask,0)
+
+
+====> Epoch: 10 Average loss: 1.5664
+====> Test set loss: 1.5507
+
+
+def encode(x, C):
+    # create list of list of tensors for saving results of each distinct layer in a list 
+    y = [[x[[c==l for c in C]].float()] for l in range(self.k) if len(x[[c==l for c in C]])>0]
+    y_C = [l for l in range(self.k) if len(x[[c==l for c in C]])>0]
+    z = []
+    for i, m in enumerate(self.layers):
+        # distinct encoder layers
+        if i < self.cum_distinctlayers[-1]:
+        #if ((i//(self.cum_distinctlayers[-1]-1)) < self.k): 
+            # determine which cluster layer belongs to
+            masked_layers = [i < cum_distinctlayers_iter for cum_distinctlayers_iter in self.cum_distinctlayers]
+            l = np.min(np.nonzero(masked_layers))
+            if l in y_C:
+                l_index = y_C.index(l)
+                y[l_index].append(F.relu(self.layers[i](y[l_index][-1])))
+            if l==(self.k-1):
+                y_com = torch.cat([y_l[-1] for y_l in y])
+        # common encoder layers
+        elif i < (self.n_encoderlayers-1):
+            y_com = F.relu(self.layers[i](y_com))
+        # last encoder layer
+        elif (i == self.n_encoderlayers-1) or (i == self.n_encoderlayers):
+            z.append(self.layers[i](y_com))
+    return z
+
+    def reparameterize(mu, logvar):
+
+        std = torch.exp(0.5*logvar)
+        eps = torch.randn_like(std)
+        return mu + eps*std
+
+
+    def decode(z):
+        for i, l in enumerate(self.layers):
+            if i > self.n_encoderlayers:
+                if i==(len(self.layers)-1):
+                    z = torch.sigmoid(self.layers[i](z))
+                else:
+                    z = F.relu(self.layers[i](z))
+
+        return z

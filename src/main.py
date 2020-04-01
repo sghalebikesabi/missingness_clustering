@@ -23,13 +23,13 @@ def parse_args():
                         default='/home/ghalebik/Projects/missingness_clustering/data/X_n10000_m5_k2.simulated', 
                         help='Input data frame path')
     
-    parser.add_argument('--k', type=int, nargs='?', default=2, help='Number of missigness clusters')
+    parser.add_argument('--k', type=int, nargs='?', default=1, help='Number of missigness clusters')
 
     parser.add_argument('--tol', type=float, nargs='?', default=10**(-3), help='Tolerance for EM algorithm')
 
-    parser.add_argument('--distinct_hdim', type=list, nargs='?', default=[[400],[400]], help='Distinct encoder layers of VAE')
-    parser.add_argument('--commonencoder_hdim', type=list, nargs='?', default=[[20,20]], help='Common encoder layers of VAE')
-    parser.add_argument('--decoder_hdim', type=list, nargs='?', default=[400], help='Decoder layers of VAE')
+    parser.add_argument('--distinct_hdim', type=int, nargs='+', default=[[75]], help='Distinct encoder layers of VAE')
+    parser.add_argument('--commonencoder_hdim', nargs='+', default=[[10,10]], help='Common encoder layers of VAE')
+    parser.add_argument('--decoder_hdim', nargs='+', default=[75], help='Decoder layers of VAE')
 
     parser.add_argument('--batch-size', type=int, default=128, metavar='N',
                         help='Input batch size for training (default: 128)')
@@ -60,7 +60,8 @@ def main(args):
     '''
     Pipeline for the presented latent feature model
     '''
-
+    print(args.distinct_hdim)
+    print(type(args.distinct_hdim))
     # determine if data is simulated
     simulated = False
     if args.input.split('.')[-1] == 'simulated':

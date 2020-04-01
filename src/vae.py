@@ -42,10 +42,10 @@ class clustered_VAE(nn.Module):
         super(clustered_VAE, self).__init__()
         
         # create attributes needed for the encoder
-        self.n_distinctlayers = [len(distinct_hdim[i]) for i in range(len(distinct_hdim))]
+        self.n_distinctlayers = [len(distinct_hdim_iter) for distinct_hdim_iter in distinct_hdim]
         self.cum_distinctlayers = [np.sum(self.n_distinctlayers[:(i+1)]) for i in range(len(self.n_distinctlayers))]
         self.distinct_hdim = distinct_hdim
-        self.n_encoderlayers = np.sum(self.n_distinctlayers) + len(commonencoder_hdim)
+        self.n_encoderlayers = self.cum_distinctlayers[-1] + len(commonencoder_hdim)
         self.k = k
         self.input_dim = input_dim
         self.layers = nn.ModuleList()
@@ -72,14 +72,15 @@ class clustered_VAE(nn.Module):
 
     def encode(self, x, C):
         # create list of list of tensors for saving results of each distinct layer in a list 
-        y = [[x[C==l,:].float()] for l in range(self.k) if len(x[C==l,:])>0]
-        y_C = [l for l in range(self.k) if len(x[C==l,:])>0]
+        y = [[x[[c==l for c in C]].float()] for l in range(self.k) if len(x[[c==l for c in C]])>0]
+        y_C = [l for l in range(self.k) if len(x[[c==l for c in C]])>0]
         z = []
         for i, m in enumerate(self.layers):
             # distinct encoder layers
-            if ((i//(self.cum_distinctlayers[-1]-1)) < self.k): 
+            if i < self.cum_distinctlayers[-1]:
+            #if ((i//(self.cum_distinctlayers[-1]-1)) < self.k): 
                 # determine which cluster layer belongs to
-                masked_layers = [i < self.cum_distinctlayers[j] for j in range(len(self.cum_distinctlayers))]
+                masked_layers = [i < cum_distinctlayers_iter for cum_distinctlayers_iter in self.cum_distinctlayers]
                 l = np.min(np.nonzero(masked_layers))
                 if l in y_C:
                     l_index = y_C.index(l)
@@ -172,22 +173,22 @@ def test(model, epoch, test_loader, device, args):
     model.eval() 
     test_loss = 0
     with torch.no_grad():
-        for i, (data_iter, batched_C_test, missingness) in enumerate(test_loader): # change to (data, _) for labelled data
+        for i, (data_iter, batched_C_test, missingness) in enumerate(test_loader):
             # load data 
             if i==0:
                 old_len_data = len(data_iter)
-            data = data.to(device)
+            data_iter = data_iter.to(device)
             # sort data observations according to cluster
             argsort_batched_C_test = np.argsort(batched_C_test)
             batched_C_test = torch.tensor([batched_C_test[argsort_batched_C_test[i]] for i in range(len(argsort_batched_C_test))])
-            data = data[argsort_batched_C_test]
-            data_C = {'x': data, 'C': batched_C_test}
+            data_iter = data_iter[argsort_batched_C_test]
+            data_C = {'x': data_iter, 'C': batched_C_test}
             recon_batch, mu, logvar = model(data_C)
-            test_loss += masekd_loss_function(recon_batch.float(), data.float(), mu.float(), logvar.float(), missingness).item()
+            test_loss += masked_loss_function(recon_batch.float(), data_iter.float(), mu.float(), logvar.float(), missingness).item()
             if args.images == True:
                 if i == 0:
-                    n = min(data.size(0), 8)
-                    comparison = torch.cat([data[:n],
+                    n = min(data_iter.size(0), 8)
+                    comparison = torch.cat([data_iter[:n],
                                         recon_batch.view(args.batch_size, 1, args.images_dim[0], args.images_dim[1])[:n]])
                     save_image(comparison.cpu(),
                             'results/reconstruction_' + str(epoch) + '.png', nrow=n)
