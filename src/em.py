@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 
 
-def EM_clustering(X, k, tol, simulated=False, seed=3434):
+def EM_clustering(X, k, tol, simulated=False, pC=0, pi=0, seed=3434):
 
     # model parameters
     if simulated==False:
@@ -20,10 +20,16 @@ def EM_clustering(X, k, tol, simulated=False, seed=3434):
     n, m = M.shape
     np.random.seed(seed)
 
+    # k=1
+    if k == 1:
+        return(0, 0, 0, np.zeros(n), M, 0)
+
     # initialization
-    pC_unnorm = list(np.random.uniform(size=k))
-    pC = [pC_unnorm/np.sum(pC_unnorm)]
-    pi = [np.random.uniform(size=(k,m))]
+    if pC==0:
+        pC_unnorm = list(np.random.uniform(size=k))
+        pC = [pC_unnorm/np.sum(pC_unnorm)]
+    if pi ==0:
+        pi = [np.random.uniform(size=(k,m))]
     loss = []
 
     niter = 0
@@ -53,8 +59,8 @@ def EM_clustering(X, k, tol, simulated=False, seed=3434):
     C = [np.argmax(tr_gamma[i]) for i in range(n)]
 
 
-    #plt.plot(loss)
-    #plt.show()
+    plt.plot(loss)
+    plt.show()
 
     return(pi[-1], pC[-1], gamma, C, M, niter)
 

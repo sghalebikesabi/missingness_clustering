@@ -2,15 +2,23 @@
 This file contains help functions for testing
 '''
 
+#args.input = '/home/ghalebik/Data/MNIST/t10k-images-idx3-ubyte'
+
 
 class test:
     def __init__(self, **kwds):
         self.__dict__.update(kwds)
 
+
+args.input = '/home/ghalebik/Data/MNIST/train-images-idx3-ubyte.gz'
+args.output = '/home/ghalebik/Projects/missingness_clustering/data/'
+args.missingness_pattern = 'clustered'
+
+
 args = test
 args.cuda = False
 args.no_cuda = True
-args.input = '/home/ghalebik/Projects/missingness_clustering/data/X_n10000_m5_k2.simulated'
+#args.input = '/home/ghalebik/Projects/missingness_clustering/data/X_n10000_m5_k2.simulated'
 args.k = 2
 args.tol = 10**6
 args.train_percentages = 0.8
@@ -18,9 +26,13 @@ args.batch_size = 128
 args.epochs = 10
 args.log_interval = 10
 
-args.distinct_hdim=[[400],[400]]
+args.distinct_hdim=[[400]]
 args.commonencoder_hdim=[[20,20]]
 args.decoder_hdim=[400]
+
+args.goal = 'imputation'
+args.images = True
+args.images_dim = [28, 28]
 
 #args.input='/home/ghalebik/Projects/missingness_clustering/data/'##='Input data frame path')
     
@@ -103,3 +115,20 @@ def encode(x, C):
                     z = F.relu(self.layers[i](z))
 
         return z
+
+
+
+            if missingness == 'MAR' or missingness=='MNAR':
+                # compute mask
+                M = np.array([(pM[i,:] < pi[C[i],:]) for i in range(n)], dtype=bool)
+                # MNAR
+                if missingness == 'MAR':
+                    M = np.array([[False]*m if (data[i,x1] < med_x1) and (data[i,x2] > med_x2) else M[i]==False for i in range(n)], dtype=bool) == False
+                else:
+                    M = np.array([
+                        [M[i,j]==False if j not in [x1, x2] else True for j in range(m)] if (data[i,x1] < med_x1) and (data[i,x2] > med_x2) 
+                        else M[i]==False for i in range(n)
+                        ], dtype=bool) == False
+                avr_completeness = np.mean(M)
+            else:
+                avr_completeness = np.sum(pC * np.mean(pi, axis=1))

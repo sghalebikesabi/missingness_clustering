@@ -4,6 +4,7 @@ This code makes use of the repo https://github.com/pytorch/examples/tree/master/
 '''
 
 import numpy as np
+import os
 import torch
 import torch.utils.data
 from torch import optim, nn
@@ -147,7 +148,10 @@ def train(model, train_loader, test_loader, device, args):
             data_C = {'x': data_iter, 'C': batched_C_train}
             # train model
             recon_batch, mu, logvar = model(data_C)
-            loss = masked_loss_function(recon_batch.float(), data_iter.float(), mu.float(), logvar.float(), missingness)
+            if args.goal != 'imputation':
+                loss = masked_loss_function(recon_batch.float(), data_iter.float(), mu.float(), logvar.float(), missingness)
+            else:
+                loss = masked_loss_function(recon_batch.float(), data_iter.float(), mu.float(), logvar.float(), missingness == False)
             loss.backward()
             train_loss += loss.item()
             optimizer.step()
@@ -164,7 +168,7 @@ def train(model, train_loader, test_loader, device, args):
             with torch.no_grad():
                 sample = torch.randn(64, 20).to(device)
                 sample = model.decode(sample).cpu()
-                save_image(sample.view(64, 1, args.images_dim[0], args.image_dim[1]), 'results/sample_' + str(epoch) + '.png')
+                save_image(sample.view(64, 1, args.images_dim[0], args.image_dim[1]), os.getcwd() + '/results/sample_' + str(epoch) + '.png')
 
     return(model)
 
@@ -191,7 +195,7 @@ def test(model, epoch, test_loader, device, args):
                     comparison = torch.cat([data_iter[:n],
                                         recon_batch.view(args.batch_size, 1, args.images_dim[0], args.images_dim[1])[:n]])
                     save_image(comparison.cpu(),
-                            'results/reconstruction_' + str(epoch) + '.png', nrow=n)
+                            os.getcwd() + '/results/reconstruction_' + str(epoch) + '.png', nrow=n)
             old_len_data = len(data_iter)
 
     test_loss /= len(test_loader.dataset)

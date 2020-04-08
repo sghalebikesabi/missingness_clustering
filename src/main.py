@@ -2,11 +2,13 @@
 This file computes the latent features according to the method presented in report
 '''
 import argparse
+from matplotlib import pyplot as plt
 import numpy as np
-from sklearn import preprocessing
-import torch
+import os
 import pandas as pd
 import pickle as pkl
+from sklearn import preprocessing
+import torch
 import warnings
 
 from em import EM_clustering
@@ -19,15 +21,15 @@ def parse_args():
     '''
     parser = argparse.ArgumentParser(description="Run missingness clustering based latent factor model.")
     
-    parser.add_argument('--input', nargs='?', 
-                        default='/home/ghalebik/Projects/missingness_clustering/data/X_n10000_m5_k2.simulated', 
-                        help='Input data frame path')
+    parser.add_argument('--input', nargs='?', default='X_n10000_m5_k2.simulated', help='Input data frame path')
+    
+    parser.add_argument('--goal', nargs='?', default='embedding', help='Is the goal to embed the information available in a latent space (embedding) or to test the imputation (imputation)?')
     
     parser.add_argument('--k', type=int, nargs='?', default=1, help='Number of missigness clusters')
 
     parser.add_argument('--tol', type=float, nargs='?', default=10**(-3), help='Tolerance for EM algorithm')
 
-    parser.add_argument('--distinct_hdim', type=int, nargs='+', default=[[75]], help='Distinct encoder layers of VAE')
+    parser.add_argument('--distinct_hdim', type=int, nargs='+', default=[[75], [75]], help='Distinct encoder layers of VAE')
     parser.add_argument('--commonencoder_hdim', nargs='+', default=[[10,10]], help='Common encoder layers of VAE')
     parser.add_argument('--decoder_hdim', nargs='+', default=[75], help='Decoder layers of VAE')
 
@@ -56,53 +58,66 @@ def parse_args():
     return parser.parse_args()
 
 
+def imputation_loss(recon_x, x, mask):
+    BCE = F.binary_cross_entropy(recon_x, x.view(-1, x.shape[1]), reduction='sum', weight=mask.float())
+    return(BCE)    
+
+
+def show_image(x, shape=[28,28]):
+    plt.imshow(np.array(x).reshape(shape), cmap='gray')
+    plt.show()
+
+
 def main(args):
     '''
     Pipeline for the presented latent feature model
     '''
-    print(args.distinct_hdim)
-    print(type(args.distinct_hdim))
+    
     # determine if data is simulated
-    simulated = False
-    if args.input.split('.')[-1] == 'simulated':
-        simulated = True
+    simulated = 'simulated' in args.input
 
     # load data
-    with open(args.input, 'rb') as file: 
+    args.input = 'MNIST_k2_clustered_uniform.simulated'
+    with open(os.getcwd() + '/data/' + args.input, 'rb') as file: 
         X = pkl.load(file)
-    if simulated == True:
+    
+    # resample order
+    if simulated:
         data = X['X'].sample(frac=1)
     else:
-        data = X.sample(frac=1)
+        data = pd.DataFrame(X).sample(frac=1)
     kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
 
+    # train test split data
+    data_train = data.iloc[:int(args.train_percentages*len(data))]
+    data_test = data.iloc[int(args.train_percentages*len(data)):]
+
     # save old indices to preserve order of original order
-    old_indices = data.index
+    old_indices_train = data_train.index
+    old_indices_test = data_test.index
 
     # run EM algorithm
-    pi, pC, gamma, C, M, niter = EM_clustering(X, args.k, args.tol, simulated)
+    pi, pC, gamma, C_train, M_train, niter = EM_clustering(data_train, args.k, args.tol, simulated)
+    pi, pC, gamma, C_test, M_test, niter = EM_clustering(data_test, args.k, args.tol, simulated, pi=pi, pC=pC)
 
     # mean imputation within clusters
-    data2 = pd.DataFrame(columns=data.columns)
+    data2_train = pd.DataFrame(columns=data_train.columns)
     for l in range(args.k):
-        data2 = data2.append(data.loc[np.where([c==l for c in C])].apply(lambda x: x.fillna(x.mean()), axis=0))
+        data2_train = data2_train.append(data_train.iloc[np.where(C_train==l)].apply(lambda x: x.fillna(x.mean()), axis=0))
+    data_train = data2_train.loc[old_indices_train]
 
-    data = data2.iloc[old_indices]
+    data2_test = pd.DataFrame(columns=data_test.columns)
+    for l in range(args.k):
+        data2_test = data2_test.append(data_test.iloc[np.where(C_test==l)].apply(lambda x: x.fillna(x.mean()), axis=0))
+    data_test = data2_test.loc[old_indices_test]
 
-    # normalize data
-    data_train = data.iloc[:int(args.train_percentages*len(data))].values
-    data_test = data.iloc[int(args.train_percentages*len(data)):].values
+    # normalize values
     min_max_scaler = preprocessing.MinMaxScaler()
     min_max_scaler.fit(data_train)
     data_train = torch.tensor(min_max_scaler.transform(data_train))
     data_test = torch.tensor(min_max_scaler.transform(data_test))
 
     # transform data into DataLoader
-    C_train = torch.tensor(C[:int(args.train_percentages*len(data))])
-    C_test = torch.tensor(C[int(args.train_percentages*len(data)):])
-    M_train = torch.tensor(M[:int(args.train_percentages*len(data)),:])
-    M_test = torch.tensor(M[int(args.train_percentages*len(data)):,:])
-
     train_loader = torch.utils.data.DataLoader(missingness_dataset(data_train, C_train, M_train), 
                         batch_size=args.batch_size, shuffle=True, **kwargs)
     test_loader = torch.utils.data.DataLoader(missingness_dataset(data_test, C_test, M_test),
@@ -111,11 +126,14 @@ def main(args):
     # create VAE model
     device = torch.device("cuda" if args.cuda else "cpu")
    
-    model = clustered_VAE(input_dim=data.shape[1], k=args.k, distinct_hdim=args.distinct_hdim, 
+    model = clustered_VAE(input_dim=data_train.shape[1], k=args.k, distinct_hdim=args.distinct_hdim, 
                             commonencoder_hdim=args.commonencoder_hdim, decoder_hdim=args.decoder_hdim).to(device)
 
     # train and test VAE
     model = train(model, train_loader, test_loader, device, args)
+
+    # reconstruction loss
+    print('The masked reconstruction loss is ', masked_reconstruction_loss(recon_x, x, mask))
 
 if __name__ == "__main__":
     args = parse_args()
