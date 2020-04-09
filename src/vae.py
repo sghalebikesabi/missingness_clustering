@@ -127,7 +127,7 @@ def masked_loss_function(recon_x, x, mu, logvar, mask):
     return BCE + KLD
 
 
-def train(model, train_loader, test_loader, device, args):
+def train(model, train_loader, test_loader, device, output_path, args):
     torch.manual_seed(args.seed)
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
     for epoch in range(1, args.epochs + 1):
@@ -159,18 +159,18 @@ def train(model, train_loader, test_loader, device, args):
 
         print('====> Epoch: {} Average loss: {:.4f}'.format(
             epoch, train_loss / len(train_loader.dataset)))
-        test(model, epoch, test_loader, device, args)
+        test(model, epoch, test_loader, device, output_path, args)
 
         if args.images == True:
             with torch.no_grad():
                 sample = torch.randn(64, 20).to(device)
                 sample = model.decode(sample).cpu()
-                save_image(sample.view(64, 1, args.images_dim[0], args.images_dim[1]), os.getcwd() + '/results/sample_' + str(epoch) + '.png')
+                save_image(sample.view(64, 1, args.images_dim[0], args.images_dim[1]), output_path + '/sample_' + str(epoch) + '.png')
 
     return(model)
 
 
-def test(model, epoch, test_loader, device, args):
+def test(model, epoch, test_loader, device, output_path, args):
     model.eval() 
     test_loss = 0
     with torch.no_grad():
@@ -191,8 +191,7 @@ def test(model, epoch, test_loader, device, args):
                     n = min(data_iter.size(0), 8)
                     comparison = torch.cat([data_iter[:n].view(n, 1, args.images_dim[0], args.images_dim[1]),
                                         recon_batch.view(args.batch_size, 1, args.images_dim[0], args.images_dim[1])[:n]])
-                    save_image(comparison.cpu(),
-                            os.getcwd() + '/results/reconstruction_' + str(epoch) + '.png', nrow=n)
+                    save_image(comparison.cpu(), output_path + '/reconstruction_' + str(epoch) + '.png', nrow=n)
             old_len_data = len(data_iter)
 
     test_loss /= len(test_loader.dataset)

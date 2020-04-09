@@ -6,6 +6,7 @@ from matplotlib import pyplot as plt
 import numpy as np
 import os
 import pandas as pd
+from pathlib import Path
 import pickle as pkl
 from sklearn import preprocessing
 import torch
@@ -30,7 +31,7 @@ def parse_args():
 
     parser.add_argument('--tol', type=float, nargs='?', default=10**(-3), help='Tolerance for EM algorithm')
 
-    parser.add_argument('--distinct_hdim', type=int, nargs='+', default=[[400]], help='Distinct encoder layers of VAE')
+    parser.add_argument('--distinct_hdim', type=int, nargs='+', default=[[400],[400]], help='Distinct encoder layers of VAE')
     parser.add_argument('--commonencoder_hdim', nargs='+', default=[[20,20]], help='Common encoder layers of VAE')
     parser.add_argument('--decoder_hdim', nargs='+', default=[400], help='Decoder layers of VAE')
 
@@ -73,7 +74,10 @@ def main(args):
     '''
     Pipeline for the presented latent feature model
     '''
-    
+    # create folder for results
+    output_path = os.getcwd() + '/results/' + args.input.split('.')[0] + '_kguess' + str(args.k)
+    Path(output_path).mkdir(parents=True, exist_ok=True)
+  
     # determine if data is simulated
     simulated = 'simulated' in args.input
 
@@ -81,12 +85,14 @@ def main(args):
     if args.input == 'MNIST':
         X = read_in_mnist()
     #args.input = 'MNIST_k2_clustered_uniform.simulated'
-    with open(os.getcwd() + '/data/' + args.input, 'rb') as file: 
-        X = pkl.load(file)
+    else:
+        with open(os.getcwd() + '/data/' + args.input, 'rb') as file: 
+            X = pkl.load(file)
     
     # resample order
     if simulated:
-        data = X['X'].sample(frac=1)
+        X['X'].reset_index(inplace=True)
+        data = X['X'].reset_index(inplace=True).sample(frac=1)
     else:
         data = pd.DataFrame(X).sample(frac=1)
     kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
@@ -94,24 +100,34 @@ def main(args):
     # train test split data
     data_train = data.iloc[:int(args.train_percentages*len(data))]
     data_test = data.iloc[int(args.train_percentages*len(data)):]
+    if simulated:
+        C_true_train = X['C'][data_train.index]
+        C_true_test = X['C'][data_test.index]
+        M_train = X['M'][data_train.index]
+        M_test = X['M'][data_test.index]
+        X_train = {'X': data_train, 'C': C_true_train, 'M': M_train}
+        X_test = {'X': data_test, 'C': C_true_test, 'M': M_test}
+    else:
+        X_train = data_train
+        X_test = data_test
 
     # save old indices to preserve order of original order
     old_indices_train = data_train.index
     old_indices_test = data_test.index
 
     # run EM algorithm
-    pi, pC, gamma, C_train, M_train, niter = EM_clustering(data_train, args.k, args.tol, simulated)
-    pi, pC, gamma, C_test, M_test, niter = EM_clustering(data_test, args.k, args.tol, simulated, pi=pi, pC=pC)
+    pi, pC, gamma, C_train, M_train, niter = EM_clustering(X_train, args.k, args.tol, simulated)
+    gamma, C_test, M_test = EM_clustering(X_test, args.k, args.tol, simulated, pi=pi, pC=pC)
 
     # mean imputation within clusters
     data2_train = pd.DataFrame(columns=data_train.columns)
     for l in range(args.k):
-        data2_train = data2_train.append(data_train.iloc[np.where(C_train==l)].apply(lambda x: x.fillna(x.mean()), axis=0))
+        data2_train = data2_train.append(data_train.iloc[np.where(np.array(C_train)==l)].apply(lambda x: x.fillna(x.mean()), axis=0))
     data_train = data2_train.loc[old_indices_train]
 
     data2_test = pd.DataFrame(columns=data_test.columns)
     for l in range(args.k):
-        data2_test = data2_test.append(data_test.iloc[np.where(C_test==l)].apply(lambda x: x.fillna(x.mean()), axis=0))
+        data2_test = data2_test.append(data_test.iloc[np.where(np.array(C_test)==l)].apply(lambda x: x.fillna(x.mean()), axis=0))
     data_test = data2_test.loc[old_indices_test]
 
     # normalize values
@@ -133,7 +149,7 @@ def main(args):
                             commonencoder_hdim=args.commonencoder_hdim, decoder_hdim=args.decoder_hdim).to(device)
 
     # train and test VAE
-    model = train(model, train_loader, test_loader, device, args)
+    model = train(model, train_loader, test_loader, device, output_path, args)
 
 
 if __name__ == "__main__":

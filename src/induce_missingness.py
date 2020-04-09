@@ -4,9 +4,11 @@ This file induces missingness into the data input:
 '''
 
 import argparse
+from datetime import datetime
 import gzip
 import numpy as np
 import os
+from pathlib import Path
 import random
 from scipy.stats import invwishart
 from sklearn import preprocessing
@@ -186,28 +188,42 @@ def simulate_missingness(data, missingness='MNAR', overall_completeness=0.8, uni
 
 
 def main(args):
+    if 'MNIST' in args.input:
+        data = read_in_mnist()
+    
     for k in [1,2,5]:
-        for uniform in [True, False]:
+        for uniform in [True]:#, False]:
             for missingness in ['MCAR', 'MAR', 'MNAR', 'clustered']:
                 if 'MNIST' in args.input:
-                    data = read_in_mnist()
-                    missing_data = simulate_missingness(data, missingness=missingness, k=k, uniform=uniform)
-                    with open(os.getcwd() + '/data/' + 'MNIST' + '_k' + str(k) + '_' + missingness + '_' + 
-                                'not' * (1-uniform) + 'uniform' + '.simulated', 'wb') as file: 
-                        pkl.dump({'incomplete': missing_data['X'], 'complete': data, 'C': missing_data['C']}, file)
+                    # check if file exists
+                    output = 'MNIST' + '_k' + str(k) + '_' + missingness + '_' + 'not' * (1-uniform) + 'uniform' + '.simulated'
+                    print(datetime.now(), output)
+                    output_path = Path(os.getcwd() + '/data/' + output)
+                    if not output_path.is_file():
+                        # induce missingness
+                        missing_data = simulate_missingness(data, missingness=missingness, k=k, uniform=uniform)
+                        print(datetime.now(), output, ' induced missingness')
+                        # save file
+                        with open(output_path, 'wb') as file: 
+                            pkl.dump({'incomplete': missing_data['X'], 'complete': data, 'C': missing_data['C']}, file)
 
                 elif args.input == 'simulate':                        
-                        for n, m in [[100, 5], [100, 150], [1000, 150], [10000, 150]]:
-                            if k == 1 and uniform == True and missingness != 'clustered':
-                                break
+                    for n, m in [[100, 5], [100, 150], [1000, 150], [10000, 150]]:
+                        m_cat = 0
+                        m_ord = 0
+                        # check if file exists
+                        output = 'X_n' + str(n) + '_m' + str(m) +  m_cat * ('_mcat' + str(m_cat)) +  m_ord * ('_mord' + str(m_ord)) + '_k' + str(k) + '_' + missingness + '_' + 'not' * (1-uniform) + 'uniform' + '.simulated'
+                        output_path = Path(os.getcwd() + '/data/' + output)
+                        print(datetime.now(), output)
+                        if not output_path.is_file():
+                            # simulate covariates
                             data = simulate_data(k, n, m)
-                            try:
-                                missing_data = simulate_missingness(np.array(data['X']), C=data['C'], missingness=missingness, k=k, uniform=uniform)
-                            except:
-                                raise Exception("Error: " + 'X_n' + str(n) + '_m' + str(m) + '_k' + str(k) + '_' +
-                                        missingness + '_' + 'not' * (1-uniform) + 'uniform' + '.simulated') 
-                            with open(os.getcwd() + '/data/' + 'X_n' + str(n) + '_m' + str(m) + '_k' + str(k) + '_' +
-                                        missingness + '_' + 'not' * (1-uniform) + 'uniform' + '.simulated', 'wb') as file: 
+                            print(datetime.now(), output, ' simulated')
+                            # induce missingness
+                            missing_data = simulate_missingness(np.array(data['X']), C=data['C'], missingness=missingness, k=k, uniform=uniform)
+                            print(datetime.now(), output, ' induced missingness')
+                            # save file
+                            with open(output_path, 'wb') as file: 
                                 pkl.dump({'incomplete': missing_data['X'], 'complete': data['X'], 'C': missing_data['C']}, file)
 
 
