@@ -132,3 +132,6 @@ def encode(x, C):
                 avr_completeness = np.mean(M)
             else:
                 avr_completeness = np.sum(pC * np.mean(pi, axis=1))
+
+
+for batch_idx, (data_iter, batched_C_train, missingness) in enumerate(train_loader):

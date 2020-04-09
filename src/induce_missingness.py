@@ -47,7 +47,7 @@ def read_in_mnist():
     return data
 
 
-def simulate_data(k, n, m, pC=0, mu=0, sigma=0):
+def simulate_data(k, n, m, m_cat=0, m_ord=0, pC=0, mu=0, sigma=0):
     np.random.seed(args.seed)
 
     # cluster

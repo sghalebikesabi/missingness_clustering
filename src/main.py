@@ -12,6 +12,7 @@ import torch
 import warnings
 
 from em import EM_clustering
+from induce_missingness import read_in_mnist
 from vae import clustered_VAE, train, test, missingness_dataset
 
 
@@ -29,9 +30,9 @@ def parse_args():
 
     parser.add_argument('--tol', type=float, nargs='?', default=10**(-3), help='Tolerance for EM algorithm')
 
-    parser.add_argument('--distinct_hdim', type=int, nargs='+', default=[[75], [75]], help='Distinct encoder layers of VAE')
-    parser.add_argument('--commonencoder_hdim', nargs='+', default=[[10,10]], help='Common encoder layers of VAE')
-    parser.add_argument('--decoder_hdim', nargs='+', default=[75], help='Decoder layers of VAE')
+    parser.add_argument('--distinct_hdim', type=int, nargs='+', default=[[400]], help='Distinct encoder layers of VAE')
+    parser.add_argument('--commonencoder_hdim', nargs='+', default=[[20,20]], help='Common encoder layers of VAE')
+    parser.add_argument('--decoder_hdim', nargs='+', default=[400], help='Decoder layers of VAE')
 
     parser.add_argument('--batch-size', type=int, default=128, metavar='N',
                         help='Input batch size for training (default: 128)')
@@ -77,7 +78,9 @@ def main(args):
     simulated = 'simulated' in args.input
 
     # load data
-    args.input = 'MNIST_k2_clustered_uniform.simulated'
+    if args.input == 'MNIST':
+        X = read_in_mnist()
+    #args.input = 'MNIST_k2_clustered_uniform.simulated'
     with open(os.getcwd() + '/data/' + args.input, 'rb') as file: 
         X = pkl.load(file)
     
@@ -132,8 +135,6 @@ def main(args):
     # train and test VAE
     model = train(model, train_loader, test_loader, device, args)
 
-    # reconstruction loss
-    print('The masked reconstruction loss is ', masked_reconstruction_loss(recon_x, x, mask))
 
 if __name__ == "__main__":
     args = parse_args()

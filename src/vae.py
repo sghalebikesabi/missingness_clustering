@@ -16,7 +16,7 @@ from torchvision.utils import save_image
 class missingness_dataset(torch.utils.data.Dataset):
     """Missingness dataset class."""
 
-    def __init__(self, data, C, missingness):
+    def __init__(self, data, C, M):
         """
         Args:
             data: Imputed dataset.
@@ -25,7 +25,7 @@ class missingness_dataset(torch.utils.data.Dataset):
         """
         self.data = data
         self.C = C
-        self.missingness = missingness
+        self.M = M
 
     def __len__(self):
         return len(self.data)
@@ -33,7 +33,7 @@ class missingness_dataset(torch.utils.data.Dataset):
     def __getitem__(self, idx):
         if torch.is_tensor(idx):
             idx = idx.tolist()
-        sample = self.data[idx], self.C[idx], self.missingness[idx]
+        sample = self.data[idx], self.C[idx], self.M[idx]
 
         return sample
 
@@ -120,10 +120,6 @@ class clustered_VAE(nn.Module):
 # Reconstruction + KL divergence losses summed over all elements and batch
 def masked_loss_function(recon_x, x, mu, logvar, mask):
     BCE = F.binary_cross_entropy(recon_x, x.view(-1, x.shape[1]), reduction='sum', weight=mask.float())
-    #BCE = F.binary_cross_entropy(
-     #   recon_x.masked_fill_(mask, 0), 
-      #  x.view(-1, x.shape[1]).masked_fill_(mask, 0), 
-       # reduction='sum')
 
     # 0.5 * sum(1 + log(sigma^2) - mu^2 - sigma^2)
     KLD = -0.5 * torch.sum(1 + logvar - mu.pow(2) - logvar.exp())
@@ -137,7 +133,7 @@ def train(model, train_loader, test_loader, device, args):
     for epoch in range(1, args.epochs + 1):
         model.train()
         train_loss = 0
-        for batch_idx, (data_iter, batched_C_train, missingness) in enumerate(train_loader):
+        for batch_idx, (data_iter, batched_C_train, M) in enumerate(train_loader):
             # load data
             data_iter = data_iter.to(device)
             optimizer.zero_grad()
@@ -149,9 +145,9 @@ def train(model, train_loader, test_loader, device, args):
             # train model
             recon_batch, mu, logvar = model(data_C)
             if args.goal != 'imputation':
-                loss = masked_loss_function(recon_batch.float(), data_iter.float(), mu.float(), logvar.float(), missingness)
+                loss = masked_loss_function(recon_batch.float(), data_iter.float(), mu.float(), logvar.float(), M)
             else:
-                loss = masked_loss_function(recon_batch.float(), data_iter.float(), mu.float(), logvar.float(), missingness == False)
+                loss = masked_loss_function(recon_batch.float(), data_iter.float(), mu.float(), logvar.float(), M == False)
             loss.backward()
             train_loss += loss.item()
             optimizer.step()
@@ -164,11 +160,12 @@ def train(model, train_loader, test_loader, device, args):
         print('====> Epoch: {} Average loss: {:.4f}'.format(
             epoch, train_loss / len(train_loader.dataset)))
         test(model, epoch, test_loader, device, args)
+
         if args.images == True:
             with torch.no_grad():
                 sample = torch.randn(64, 20).to(device)
                 sample = model.decode(sample).cpu()
-                save_image(sample.view(64, 1, args.images_dim[0], args.image_dim[1]), os.getcwd() + '/results/sample_' + str(epoch) + '.png')
+                save_image(sample.view(64, 1, args.images_dim[0], args.images_dim[1]), os.getcwd() + '/results/sample_' + str(epoch) + '.png')
 
     return(model)
 
@@ -192,7 +189,7 @@ def test(model, epoch, test_loader, device, args):
             if args.images == True:
                 if i == 0:
                     n = min(data_iter.size(0), 8)
-                    comparison = torch.cat([data_iter[:n],
+                    comparison = torch.cat([data_iter[:n].view(n, 1, args.images_dim[0], args.images_dim[1]),
                                         recon_batch.view(args.batch_size, 1, args.images_dim[0], args.images_dim[1])[:n]])
                     save_image(comparison.cpu(),
                             os.getcwd() + '/results/reconstruction_' + str(epoch) + '.png', nrow=n)
