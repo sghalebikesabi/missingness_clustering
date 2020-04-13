@@ -1,13 +1,14 @@
 '''
 This file contains all the functions for the missigness clustering embedding approach.
 '''
+import itertools
 import matplotlib
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 import numpy as np
 
 
-def EM_clustering(X, k, tol, simulated=False, pC=0, pi=0, seed=3434):
+def EM_clustering(X, k, tol, simulated=False, pC=0, pi=0, test=False, seed=3434):
 
     # model parameters
     if not simulated:
@@ -22,7 +23,10 @@ def EM_clustering(X, k, tol, simulated=False, pC=0, pi=0, seed=3434):
 
     # k=1
     if k == 1:
-        return(0, 0, 0, np.zeros(n), M, 0)
+        if not test:
+            return(0, 0, 0, np.zeros(n), M, 0)
+        else:
+            return(0, np.zeros(n), M)
 
     # initialization
     if isinstance(pC, int):
@@ -49,7 +53,6 @@ def EM_clustering(X, k, tol, simulated=False, pC=0, pi=0, seed=3434):
             pi.append(np.array([sum_gamma_l_j[l]/sum_gamma_l[l] for l in range(k)]))
 
             if simulated:
-                permutations = list(itertools.permutations(range(3)))
                 loss.append(np.mean(C_true != [np.argmax(tr_gamma[i]) for i in range(n)]))
 
             if np.linalg.norm(pi[-1]-pi[-2]) + np.linalg.norm(pC[-1]-pC[-2]) < tol:
@@ -58,26 +61,28 @@ def EM_clustering(X, k, tol, simulated=False, pC=0, pi=0, seed=3434):
         C = [np.argmax(tr_gamma[i]) for i in range(n)]
 
         if simulated:
-            plt.plot(loss)
-            plt.show()
-            if loss[-1] > 0.5:
-                C = [1-c for c in C]
+            permutations = list(itertools.permutations(range(k)))
+            losses = []
+            for perm in permutations:
+                losses.append(np.mean([perm[c] for c in C_true] != [np.argmax(tr_gamma[i]) for i in range(n)]))
+            loss.append(np.min(losses))
+            current_permutation = permutations[np.argmin(losses)]
 
-        return(pi[-1], pC[-1], gamma, C, M, niter)
+            pi.append([list(pi[-1][current_permutation[i]]) for i in range(k)])
+            pC.append([pC[-1][current_permutation[i]] for i in range(k)])
+
+        return(loss[-1], np.array(pi[-1]), np.array(pC[-1]), gamma, C, M, niter)
 
     else:
 
         # E step
         numerator = [[np.log(pC[l]) + np.sum(np.log(pi[l]**M[i,:]*(1-pi[l])**(1-M[i,:]))) for l in range(k)] for i in range(n)]
-        # denominator = [np.log(np.sum(np.exp(numerator[i]))) for i in range(n)]
         tr_gamma = [[1/(1+np.sum([np.exp(not_l-numerator[i][l]) for not_l in numerator[i] if not_l!=numerator[i][l]])) for l in range(k)] for i in range(n)]
-        # tr_gamma = [numerator[i]/denominator[i] for i in range(n)]
 
         C = [np.argmax(tr_gamma[i]) for i in range(n)]
         gamma = list(map(list, zip(*tr_gamma))) # transpose gamma
 
-        if np.mean(C_true != [np.argmax(tr_gamma[i]) for i in range(n)]) > 0.5:
-            C = [1-c for c in C]
+        loss = np.mean(C_true != [np.argmax(tr_gamma[i]) for i in range(n)])
 
-        return(gamma, C, M)
+        return(loss, gamma, C, M)
 

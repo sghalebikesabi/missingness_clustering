@@ -2,6 +2,19 @@
 This file contains help functions for testing
 '''
 
+model.encode(data_C['x'][0].view(-1, model.input_dim), torch.tensor([1]))#data_C['C'][0].reshape((1)))
+
+for param_tensor in model.state_dict():
+    print(param_tensor, "\t", model.state_dict()[param_tensor].size())
+
+print("Optimizer's state_dict:")
+for var_name in optimizer.state_dict():
+    print(var_name, "\t", optimizer.state_dict()[var_name])
+
+from torch import autograd
+with autograd.detect_anomaly():
+    model(data_C)
+
 #args.input = '/home/ghalebik/Data/MNIST/t10k-images-idx3-ubyte'
 
 
@@ -18,7 +31,6 @@ args.missingness_pattern = 'clustered'
 args = test
 args.cuda = False
 args.no_cuda = True
-#args.input = '/home/ghalebik/Projects/missingness_clustering/data/X_n10000_m5_k2.simulated'
 args.k = 2
 args.tol = 10**(-3)
 args.train_percentages = 0.8

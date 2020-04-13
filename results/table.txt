@@ -1,0 +1,2 @@
+Data & missingness & uniform & k & EM train error & EM test error & train loss & test loss & train reconstruction  & test reconstruction \\
+MNIST k2 & clustered & uniform & 2 & 1.0 & 0.29375 & 38.40968999226888 & 38.47504652913411 & 0.00179411587305367 & 0.0010082857916131616 \

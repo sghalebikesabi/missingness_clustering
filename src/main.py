@@ -14,7 +14,7 @@ import warnings
 
 from em import EM_clustering
 from induce_missingness import read_in_mnist
-from vae import clustered_VAE, train, test, missingness_dataset
+from vae import clustered_VAE, train, test, missingness_dataset, NANError
 
 
 def parse_args():
@@ -84,15 +84,15 @@ def main(args):
     # load data
     if args.input == 'MNIST':
         X = read_in_mnist()
-    #args.input = 'MNIST_k2_clustered_uniform.simulated'
     else:
         with open(os.getcwd() + '/data/' + args.input, 'rb') as file: 
             X = pkl.load(file)
     
     # resample order
     if simulated:
-        X['X'].reset_index(inplace=True)
-        data = X['X'].reset_index(inplace=True).sample(frac=1)
+        data = X['incomplete'].sample(frac=1)
+        if 'M' not in X.keys():
+            X['M'] = np.array(np.isnan(data))
     else:
         data = pd.DataFrame(X).sample(frac=1)
     kwargs = {'num_workers': 1, 'pin_memory': True} if args.cuda else {}
@@ -116,18 +116,21 @@ def main(args):
     old_indices_test = data_test.index
 
     # run EM algorithm
-    pi, pC, gamma, C_train, M_train, niter = EM_clustering(X_train, args.k, args.tol, simulated)
-    gamma, C_test, M_test = EM_clustering(X_test, args.k, args.tol, simulated, pi=pi, pC=pC)
+    EM_train_loss, pi, pC, gamma, C_train, M_train, niter = EM_clustering(X_train, args.k, args.tol, simulated)    
+    EM_test_loss, gamma, C_test, M_test = EM_clustering(X_test, args.k, args.tol, simulated, pi=pi, pC=pC, test=True)
 
     # mean imputation within clusters
+    mean_train = pd.DataFrame(columns=data_train.columns)
+    mean_train = mean_train.append([np.mean(data_train.iloc[np.where(np.array(C_train)==l)]) for l in range(args.k)])
+
     data2_train = pd.DataFrame(columns=data_train.columns)
     for l in range(args.k):
-        data2_train = data2_train.append(data_train.iloc[np.where(np.array(C_train)==l)].apply(lambda x: x.fillna(x.mean()), axis=0))
+        data2_train = data2_train.append(data_train.iloc[np.where(np.array(C_train)==l)].fillna(mean_train.iloc[l]))
     data_train = data2_train.loc[old_indices_train]
 
     data2_test = pd.DataFrame(columns=data_test.columns)
     for l in range(args.k):
-        data2_test = data2_test.append(data_test.iloc[np.where(np.array(C_test)==l)].apply(lambda x: x.fillna(x.mean()), axis=0))
+        data2_test = data2_test.append(data_test.iloc[np.where(np.array(C_test)==l)].fillna(mean_train.iloc[l]))
     data_test = data2_test.loc[old_indices_test]
 
     # normalize values
@@ -149,7 +152,16 @@ def main(args):
                             commonencoder_hdim=args.commonencoder_hdim, decoder_hdim=args.decoder_hdim).to(device)
 
     # train and test VAE
-    model = train(model, train_loader, test_loader, device, output_path, args)
+    train_error, reconstruction_train, test_error, reconstruction_test, model = train(model, train_loader, test_loader, device, output_path, args)
+
+    # save results
+    split_input = args.input.split('_')
+    with open(os.getcwd() + '/results/table.txt', "a") as myfile:
+        myfile.write(' '.join(split_input[:-2]) + ' & ' + split_input[-2] + ' & ' 
+        + ' '.join(split_input[-1].split('.')[:1]) + ' & ' + str(args.k) + ' & ' + str(EM_train_loss) + ' & ' 
+        + str(EM_test_loss) + ' & ' + str(train_error) + ' & ' + str(test_error) + ' & ' 
+        + str(reconstruction_train) + ' & ' + str(reconstruction_test) + ' \\')
+
 
 
 if __name__ == "__main__":

@@ -60,11 +60,16 @@ def simulate_data(k, n, m, m_cat=0, m_ord=0, pC=0, mu=0, sigma=0):
 
     # covariates as mixture of multivariate normals
     if mu==0:
+        cov1 = np.random.sample((m,m))
+        cov1 = 0.5*(cov1+np.matrix.transpose(cov1))
+        cov1 = cov1 + m*np.identity(m)
         prior_mu = np.random.normal(np.random.normal(scale=5, size=m))
-        mu = np.random.multivariate_normal(prior_mu, cov=np.identity(m), size=k)
+        mu = np.random.multivariate_normal(prior_mu, cov=cov1, size=k)
     if sigma==0:
-        prior_sigma = np.linalg.matrix_power(np.random.uniform(size=(m,m)),2)
-        sigma = invwishart.rvs(m+3, scale=np.identity(m), size=k, random_state=args.seed)  # prior sigma is not positive definite
+        cov2 = np.random.sample((m,m))
+        cov2 = 0.5*(cov1+np.matrix.transpose(cov1))
+        cov2 = cov2 + m*np.identity(m)
+        sigma = invwishart.rvs(m+3, scale=cov2, size=k, random_state=args.seed)  # prior sigma is not positive definite
 
     # draw sample matrix
     if k > 1:
@@ -72,6 +77,40 @@ def simulate_data(k, n, m, m_cat=0, m_ord=0, pC=0, mu=0, sigma=0):
     else:
         X = [np.random.multivariate_normal(mu[C[i]], sigma) for i in range(n)]
     X = pd.DataFrame.from_records(X)
+
+    # change some features to categorical and ordinal variables
+    save_inds = np.random.choice(m, m_cat+m_ord, replace=False)
+    cat_X = save_inds[:m_cat]
+    ord_X = save_inds[m_cat:]
+
+    nclasses = [2, 3, 4, 5]
+    p_nclasses = [0.3, 0.35, 0.25, 0.1]
+    nclasses_cat = np.random.choice(nclasses, m_cat, replace=True, p = p_nclasses)
+    nclasses_ord = np.random.choice(nclasses, m_ord, replace=True, p = p_nclasses)
+    cat_class_probs = [np.cumsum(np.random.dirichlet([1]*nclasses_cat[ord_ind])) for ord_ind in range(m_cat)]
+    ord_class_probs = [np.cumsum(np.random.dirichlet([1]*nclasses_ord[ord_ind])) for ord_ind in range(m_ord)]
+
+    def quantile_nr(x, quantiles):
+        if x < quantiles[0]:
+            return(0)
+        elif x > quantiles[-2]:
+            return(len(quantiles)-1)
+        else:
+            for i in range(len(quantiles)-2):
+                if (x > quantiles[i]) and (x < quantiles[i+1]):
+                    return(i+1)
+
+    for ind in range(m_cat):
+        permute = np.random.permutation(nclasses_cat[ind])
+        cat_class_quants = [np.quantile(X.loc[:, cat_X[ind]], cat_class_probs[ind][quant_ind]) for quant_ind in range(nclasses_cat[ind])]
+        X.loc[:, cat_X[ind]] = X.loc[:, cat_X[ind]].apply(quantile_nr, args=(cat_class_quants,))
+        X.loc[:, cat_X[ind]] = X.loc[:, cat_X[ind]].apply(lambda x: permute[x])
+    
+    for ind in range(m_ord):
+        ord_class_quants = [np.quantile(X.loc[:, ord_X[ind]], ord_class_probs[ind][quant_ind]) for quant_ind in range(nclasses_ord[ind])]
+        X.loc[:, ord_X[ind]] = X.loc[:, ord_X[ind]].apply(quantile_nr, args=(ord_class_quants,))
+
+    X = pd.get_dummies(X, columns=list(cat_X[0]))
 
     return({'X': X, 'C': C})
 
@@ -107,6 +146,8 @@ def simulate_missingness(data, missingness='MNAR', overall_completeness=0.8, uni
         if isinstance(C, int):
             pC = np.random.dirichlet([1]*k)
             C = np.random.choice(np.arange(k), n, p = list(pC))
+        else: 
+            pC = [np.mean(C==l) for l in range(k)]
             
     else:
         while True:
@@ -128,18 +169,21 @@ def simulate_missingness(data, missingness='MNAR', overall_completeness=0.8, uni
     
 
     if pi==0:
+        spread = min(0.95 - desired_completeness, 0.3)
         if not uniform:
+            pi = np.random.uniform(low = desired_completeness - spread, high = desired_completeness + spread, size=(k,m))
             while True:
-                spread = max(0.95 - desired_completeness, 0.3)
-                pi = np.random.uniform(low = desired_completeness - spread, high = desired_completeness + spread, size=(k,m))
                 if missingness == 'MAR':
                     pi[:,x1] = 1
                     pi[:,x2] = 1
-                pi /= np.sum(pC*np.mean(pi,axis=1))
+                try:
+                    pi /= np.sum(pC*np.mean(pi,axis=1))
+                except RuntimeWarning:
+                    print(pi, pC)
                 pi *= desired_completeness
                 pi_larger_1 = np.where(pi > 1)
                 if np.sum(pi > 1) > 0:           
-                    pi[pi_larger_1] = np.random.uniform(low=0.65, high=0.95, size=(len(pi_larger_1[0]))) 
+                    pi[pi_larger_1] = np.random.uniform(low= desired_completeness - spread, high= desired_completeness + spread, size=(len(pi_larger_1[0]))) 
                 else: 
                     break
         else:
@@ -192,7 +236,7 @@ def main(args):
         data = read_in_mnist()
     
     for k in [1,2,5]:
-        for uniform in [True]:#, False]:
+        for uniform in [True, False]:
             for missingness in ['MCAR', 'MAR', 'MNAR', 'clustered']:
                 if 'MNIST' in args.input:
                     # check if file exists
@@ -208,23 +252,24 @@ def main(args):
                             pkl.dump({'incomplete': missing_data['X'], 'complete': data, 'C': missing_data['C']}, file)
 
                 elif args.input == 'simulate':                        
-                    for n, m in [[100, 5], [100, 150], [1000, 150], [10000, 150]]:
-                        m_cat = 0
-                        m_ord = 0
-                        # check if file exists
-                        output = 'X_n' + str(n) + '_m' + str(m) +  m_cat * ('_mcat' + str(m_cat)) +  m_ord * ('_mord' + str(m_ord)) + '_k' + str(k) + '_' + missingness + '_' + 'not' * (1-uniform) + 'uniform' + '.simulated'
-                        output_path = Path(os.getcwd() + '/data/' + output)
-                        print(datetime.now(), output)
-                        if not output_path.is_file():
-                            # simulate covariates
-                            data = simulate_data(k, n, m)
-                            print(datetime.now(), output, ' simulated')
-                            # induce missingness
-                            missing_data = simulate_missingness(np.array(data['X']), C=data['C'], missingness=missingness, k=k, uniform=uniform)
-                            print(datetime.now(), output, ' induced missingness')
-                            # save file
-                            with open(output_path, 'wb') as file: 
-                                pkl.dump({'incomplete': missing_data['X'], 'complete': data['X'], 'C': missing_data['C']}, file)
+                    for n, m in [[10000, 150]]:#[[100, 5], [100, 150], [1000, 150], [10000, 150]]:
+                        for m_cat, m_ord in [[70, 70], [10, 10]]:
+                            if (n != 10000) or (m != 150):
+                                m_cat, m_ord = 0, 0
+                            # check if file exists
+                            output = 'X_n' + str(n) + '_m' + str(m) +  (m_cat>0) * ('_mcat' + str(m_cat)) +  (m_ord>0) * ('_mord' + str(m_ord)) + '_k' + str(k) + '_' + missingness + '_' + 'not' * (1-uniform) + 'uniform' + '.simulated'
+                            output_path = Path(os.getcwd() + '/data/' + output)
+                            print(datetime.now(), output)
+                            if not output_path.is_file():
+                                # simulate covariates
+                                data = simulate_data(k, n, m)
+                                print(datetime.now(), output, ' simulated')
+                                # induce missingness
+                                missing_data = simulate_missingness(np.array(data['X']), C=data['C'], missingness=missingness, k=k, uniform=uniform)
+                                print(datetime.now(), output, ' induced missingness')
+                                # save file
+                                with open(output_path, 'wb') as file: 
+                                    pkl.dump({'incomplete': missing_data['X'], 'complete': data['X'], 'C': missing_data['C'], 'M': missing_data['M']}, file)
 
 
 if __name__ == "__main__":

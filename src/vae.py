@@ -12,6 +12,10 @@ from torch.nn import functional as F
 from torchvision import datasets, transforms
 from torchvision.utils import save_image
 
+class NANError(Exception):
+    """raised when there is a nan value where there does not belong a nan value"""
+    pass
+
 
 class missingness_dataset(torch.utils.data.Dataset):
     """Missingness dataset class."""
@@ -127,6 +131,10 @@ def masked_loss_function(recon_x, x, mu, logvar, mask):
     return BCE + KLD
 
 
+def reconstruction_loss(recon_x, x, mask):
+    return(torch.mean(recon_x[mask==False] - x[mask==False]))
+
+
 def train(model, train_loader, test_loader, device, output_path, args):
     torch.manual_seed(args.seed)
     optimizer = optim.Adam(model.parameters(), lr=1e-3)
@@ -144,6 +152,8 @@ def train(model, train_loader, test_loader, device, output_path, args):
             data_C = {'x': data_iter, 'C': batched_C_train}
             # train model
             recon_batch, mu, logvar = model(data_C)
+            if True in (mu != mu):
+                raise NANError
             if args.goal != 'imputation':
                 loss = masked_loss_function(recon_batch.float(), data_iter.float(), mu.float(), logvar.float(), M)
             else:
@@ -159,7 +169,7 @@ def train(model, train_loader, test_loader, device, output_path, args):
 
         print('====> Epoch: {} Average loss: {:.4f}'.format(
             epoch, train_loss / len(train_loader.dataset)))
-        test(model, epoch, test_loader, device, output_path, args)
+        test_error, test_reconstruction = test(model, epoch, test_loader, device, output_path, args)
 
         if args.images == True:
             with torch.no_grad():
@@ -167,14 +177,14 @@ def train(model, train_loader, test_loader, device, output_path, args):
                 sample = model.decode(sample).cpu()
                 save_image(sample.view(64, 1, args.images_dim[0], args.images_dim[1]), output_path + '/sample_' + str(epoch) + '.png')
 
-    return(model)
+    return(train_loss / len(train_loader.dataset), reconstruction_loss(recon_batch.float(), data_iter.float(), M).item(), test_error, test_reconstruction, model)
 
 
 def test(model, epoch, test_loader, device, output_path, args):
     model.eval() 
     test_loss = 0
     with torch.no_grad():
-        for i, (data_iter, batched_C_test, missingness) in enumerate(test_loader):
+        for i, (data_iter, batched_C_test, M) in enumerate(test_loader):
             # load data 
             if i==0:
                 old_len_data = len(data_iter)
@@ -185,14 +195,20 @@ def test(model, epoch, test_loader, device, output_path, args):
             data_iter = data_iter[argsort_batched_C_test]
             data_C = {'x': data_iter, 'C': batched_C_test}
             recon_batch, mu, logvar = model(data_C)
-            test_loss += masked_loss_function(recon_batch.float(), data_iter.float(), mu.float(), logvar.float(), missingness).item()
+            test_loss += masked_loss_function(recon_batch.float(), data_iter.float(), mu.float(), logvar.float(), M).item()
             if args.images == True:
                 if i == 0:
                     n = min(data_iter.size(0), 8)
                     comparison = torch.cat([data_iter[:n].view(n, 1, args.images_dim[0], args.images_dim[1]),
-                                        recon_batch.view(args.batch_size, 1, args.images_dim[0], args.images_dim[1])[:n]])
+                                        recon_batch.view(len(recon_batch[0]), 1, args.images_dim[0], args.images_dim[1])[:n]])
                     save_image(comparison.cpu(), output_path + '/reconstruction_' + str(epoch) + '.png', nrow=n)
             old_len_data = len(data_iter)
-
+    
+    reconstruction_test = reconstruction_loss(recon_batch.float(), data_iter.float(), M).item()
     test_loss /= len(test_loader.dataset)
     print('====> Test set loss: {:.4f}'.format(test_loss))
+
+    return(test_loss, reconstruction_test)
+
+
+
