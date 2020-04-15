@@ -49,6 +49,14 @@ def read_in_mnist():
     return data
 
 
+def read_in_mnist_labels():
+    '''adapted from https://stackoverflow.com/questions/40427435/extract-images-from-idx3-ubyte-file-or-gzip-via-python'''
+    f = gzip.open('/home/ghalebik/Data/MNIST/train-labels-idx1-ubyte.gz','rb')
+    buf = f.read()
+    data = np.frombuffer(buf, dtype=np.uint8, offset=8)
+    return data
+
+
 def simulate_data(k, n, m, m_cat=0, m_ord=0, pC=0, mu=0, sigma=0):
     np.random.seed(args.seed)
 
@@ -63,7 +71,7 @@ def simulate_data(k, n, m, m_cat=0, m_ord=0, pC=0, mu=0, sigma=0):
         cov1 = np.random.sample((m,m))
         cov1 = 0.5*(cov1+np.matrix.transpose(cov1))
         cov1 = cov1 + m*np.identity(m)
-        prior_mu = np.random.normal(np.random.normal(scale=5, size=m))
+        prior_mu = np.random.normal(scale=5, size=m)
         mu = np.random.multivariate_normal(prior_mu, cov=cov1, size=k)
     if sigma==0:
         cov2 = np.random.sample((m,m))
@@ -110,7 +118,8 @@ def simulate_data(k, n, m, m_cat=0, m_ord=0, pC=0, mu=0, sigma=0):
         ord_class_quants = [np.quantile(X.loc[:, ord_X[ind]], ord_class_probs[ind][quant_ind]) for quant_ind in range(nclasses_ord[ind])]
         X.loc[:, ord_X[ind]] = X.loc[:, ord_X[ind]].apply(quantile_nr, args=(ord_class_quants,))
 
-    X = pd.get_dummies(X, columns=list(cat_X[0]))
+    if m_cat > 0:
+        X = pd.get_dummies(X, columns=list(cat_X))
 
     return({'X': X, 'C': C})
 
@@ -142,7 +151,7 @@ def simulate_missingness(data, missingness='MNAR', overall_completeness=0.8, uni
         pC = np.zeros(k)
         pC[0] = 1
         C = np.zeros(n, int)
-    elif missingness == 'clustered':
+    elif missingness == 'clustered' or missingness == 'labelClustered':
         if isinstance(C, int):
             pC = np.random.dirichlet([1]*k)
             C = np.random.choice(np.arange(k), n, p = list(pC))
@@ -171,7 +180,8 @@ def simulate_missingness(data, missingness='MNAR', overall_completeness=0.8, uni
     if pi==0:
         spread = min(0.95 - desired_completeness, 0.3)
         if not uniform:
-            pi = np.random.uniform(low = desired_completeness - spread, high = desired_completeness + spread, size=(k,m))
+            #pi = np.random.uniform(low = desired_completeness - spread, high = desired_completeness + spread, size=(k,m))
+            pi = np.random.beta(16, 4, (m, k))
             while True:
                 if missingness == 'MAR':
                     pi[:,x1] = 1
@@ -235,9 +245,11 @@ def main(args):
     if 'MNIST' in args.input:
         data = read_in_mnist()
     
-    for k in [1,2,5]:
+    for k in [1,2,5,10]:
         for uniform in [True, False]:
-            for missingness in ['MCAR', 'MAR', 'MNAR', 'clustered']:
+            for missingness in ['MCAR', 'MAR', 'MNAR', 'clustered', 'labelClustered']:
+                if missingness == 'labelClustered' and k!=10:
+                    break
                 if 'MNIST' in args.input:
                     # check if file exists
                     output = 'MNIST' + '_k' + str(k) + '_' + missingness + '_' + 'not' * (1-uniform) + 'uniform' + '.simulated'
@@ -245,14 +257,21 @@ def main(args):
                     output_path = Path(os.getcwd() + '/data/' + output)
                     if not output_path.is_file():
                         # induce missingness
-                        missing_data = simulate_missingness(data, missingness=missingness, k=k, uniform=uniform)
+                        if missingness == 'labelClustered':
+                            labels = read_in_mnist_labels()
+                            missing_data = simulate_missingness(data, missingness=missingness, k=10, uniform=uniform, C=labels)
+                        else:
+                            missing_data = simulate_missingness(data, missingness=missingness, k=k, uniform=uniform)
+
                         print(datetime.now(), output, ' induced missingness')
                         # save file
                         with open(output_path, 'wb') as file: 
                             pkl.dump({'incomplete': missing_data['X'], 'complete': data, 'C': missing_data['C']}, file)
 
                 elif args.input == 'simulate':                        
-                    for n, m in [[10000, 150]]:#[[100, 5], [100, 150], [1000, 150], [10000, 150]]:
+                    if missingness == 'labelClustered':
+                        break
+                    for n, m in [[100, 5], [100, 150], [1000, 150], [10000, 150]]:
                         for m_cat, m_ord in [[70, 70], [10, 10]]:
                             if (n != 10000) or (m != 150):
                                 m_cat, m_ord = 0, 0

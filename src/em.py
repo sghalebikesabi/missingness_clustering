@@ -6,11 +6,12 @@ import matplotlib
 matplotlib.use('TkAgg')
 import matplotlib.pyplot as plt
 import numpy as np
-
+import time 
 
 def EM_clustering(X, k, tol, simulated=False, pC=0, pi=0, test=False, seed=3434):
 
     # model parameters
+    timeout = time.time() + 60*2
     if not simulated:
         M = np.array(X.notnull())
     else: 
@@ -24,9 +25,9 @@ def EM_clustering(X, k, tol, simulated=False, pC=0, pi=0, test=False, seed=3434)
     # k=1
     if k == 1:
         if not test:
-            return(0, 0, 0, np.zeros(n), M, 0)
+            return(0, 0, 0, 0, np.zeros(n), M, 0)
         else:
-            return(0, np.zeros(n), M)
+            return(0, 0, np.zeros(n), M)
 
     # initialization
     if isinstance(pC, int):
@@ -38,7 +39,8 @@ def EM_clustering(X, k, tol, simulated=False, pC=0, pi=0, test=False, seed=3434)
         niter = 0
         while True:
             niter += 1
-
+            if niter%100 == 0:
+                print('EM: ', np.linalg.norm(pi[-1]-pi[-2]) + np.linalg.norm(pC[-1]-pC[-2]))
             # E step
             numerator = [[np.log(pC[-1][l]) + np.sum(np.log(pi[-1][l]**M[i,:]*(1-pi[-1][l])**(1-M[i,:]))) for l in range(k)] for i in range(n)]
             tr_gamma = [[1/(1+np.sum([np.exp(not_l-numerator[i][l]) for not_l in numerator[i] if not_l!=numerator[i][l]])) for l in range(k)] for i in range(n)]
@@ -55,7 +57,7 @@ def EM_clustering(X, k, tol, simulated=False, pC=0, pi=0, test=False, seed=3434)
             if simulated:
                 loss.append(np.mean(C_true != [np.argmax(tr_gamma[i]) for i in range(n)]))
 
-            if np.linalg.norm(pi[-1]-pi[-2]) + np.linalg.norm(pC[-1]-pC[-2]) < tol:
+            if (np.linalg.norm(pi[-1]-pi[-2]) + np.linalg.norm(pC[-1]-pC[-2]) < tol) or (niter > 2000) or (time.time()>timeout):
                     break
 
         C = [np.argmax(tr_gamma[i]) for i in range(n)]
@@ -64,7 +66,7 @@ def EM_clustering(X, k, tol, simulated=False, pC=0, pi=0, test=False, seed=3434)
             permutations = list(itertools.permutations(range(k)))
             losses = []
             for perm in permutations:
-                losses.append(np.mean([perm[c] for c in C_true] != [np.argmax(tr_gamma[i]) for i in range(n)]))
+                losses.append(np.mean(C_true != [perm[c] for c in [np.argmax(tr_gamma[i]) for i in range(n)]]))
             loss.append(np.min(losses))
             current_permutation = permutations[np.argmin(losses)]
 

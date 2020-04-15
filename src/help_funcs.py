@@ -23,7 +23,7 @@ class test:
         self.__dict__.update(kwds)
 
 
-args.input = '/home/ghalebik/Data/MNIST/train-images-idx3-ubyte.gz'
+args.input = 'MNIST_k10_clustered_notuniform.simulate' #MNIST_k10_clustered_notuniform.simulate
 args.output = '/home/ghalebik/Projects/missingness_clustering/data/'
 args.missingness_pattern = 'clustered'
 

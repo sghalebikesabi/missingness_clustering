@@ -2,6 +2,7 @@
 This file computes the latent features according to the method presented in report
 '''
 import argparse
+from datetime import datetime
 from matplotlib import pyplot as plt
 import numpy as np
 import os
@@ -23,11 +24,11 @@ def parse_args():
     '''
     parser = argparse.ArgumentParser(description="Run missingness clustering based latent factor model.")
     
-    parser.add_argument('--input', nargs='?', default='X_n10000_m5_k2.simulated', help='Input data frame path')
+    parser.add_argument('--input', nargs='?', default='X_n10000_m150_k2_clustered_uniform.simulated', help='Input data frame path')
     
     parser.add_argument('--goal', nargs='?', default='embedding', help='Is the goal to embed the information available in a latent space (embedding) or to test the imputation (imputation)?')
     
-    parser.add_argument('--k', type=int, nargs='?', default=1, help='Number of missigness clusters')
+    parser.add_argument('--k', type=int, nargs='?', default=2, help='Number of missigness clusters')
 
     parser.add_argument('--tol', type=float, nargs='?', default=10**(-3), help='Tolerance for EM algorithm')
 
@@ -75,6 +76,9 @@ def main(args):
     Pipeline for the presented latent feature model
     '''
     # create folder for results
+    print('File ', args.input, ' at ', datetime.now())
+    print('with k guessed being ', args.k)
+
     output_path = os.getcwd() + '/results/' + args.input.split('.')[0] + '_kguess' + str(args.k)
     Path(output_path).mkdir(parents=True, exist_ok=True)
   
@@ -85,7 +89,7 @@ def main(args):
     if args.input == 'MNIST':
         X = read_in_mnist()
     else:
-        with open(os.getcwd() + '/data/' + args.input, 'rb') as file: 
+        with open(os.getcwd() + '/' + args.input, 'rb') as file: 
             X = pkl.load(file)
     
     # resample order
@@ -115,52 +119,74 @@ def main(args):
     old_indices_train = data_train.index
     old_indices_test = data_test.index
 
-    # run EM algorithm
-    EM_train_loss, pi, pC, gamma, C_train, M_train, niter = EM_clustering(X_train, args.k, args.tol, simulated)    
-    EM_test_loss, gamma, C_test, M_test = EM_clustering(X_test, args.k, args.tol, simulated, pi=pi, pC=pC, test=True)
+    if args.k < 10:
+        # run EM algorithm
+        EM_train_loss, pi, pC, gamma, C_train, M_train, niter = EM_clustering(X_train, args.k, args.tol, simulated)    
+        EM_test_loss, gamma, C_test, M_test = EM_clustering(X_test, args.k, args.tol, simulated, pi=pi, pC=pC, test=True)
+        if simulated:
+            print('EM_train_loss: ', EM_train_loss)
+            print('EM_test_loss: ', EM_test_loss)
 
-    # mean imputation within clusters
-    mean_train = pd.DataFrame(columns=data_train.columns)
-    mean_train = mean_train.append([np.mean(data_train.iloc[np.where(np.array(C_train)==l)]) for l in range(args.k)])
+        # mean imputation within clusters
+        mean_train = pd.DataFrame(columns=data_train.columns)
+        mean_train = mean_train.append([np.mean(data_train.iloc[np.where(np.array(C_train)==l)]) for l in range(args.k)])
 
-    data2_train = pd.DataFrame(columns=data_train.columns)
-    for l in range(args.k):
-        data2_train = data2_train.append(data_train.iloc[np.where(np.array(C_train)==l)].fillna(mean_train.iloc[l]))
-    data_train = data2_train.loc[old_indices_train]
+        data2_train = pd.DataFrame(columns=data_train.columns)
+        for l in range(args.k):
+            data2_train = data2_train.append(data_train.iloc[np.where(np.array(C_train)==l)].fillna(mean_train.iloc[l]))
+        data_train = data2_train.loc[old_indices_train]
 
-    data2_test = pd.DataFrame(columns=data_test.columns)
-    for l in range(args.k):
-        data2_test = data2_test.append(data_test.iloc[np.where(np.array(C_test)==l)].fillna(mean_train.iloc[l]))
-    data_test = data2_test.loc[old_indices_test]
+        data2_test = pd.DataFrame(columns=data_test.columns)
+        for l in range(args.k):
+            data2_test = data2_test.append(data_test.iloc[np.where(np.array(C_test)==l)].fillna(mean_train.iloc[l]))
+        data_test = data2_test.loc[old_indices_test]
 
-    # normalize values
-    min_max_scaler = preprocessing.MinMaxScaler()
-    min_max_scaler.fit(data_train)
-    data_train = torch.tensor(min_max_scaler.transform(data_train))
-    data_test = torch.tensor(min_max_scaler.transform(data_test))
+        # normalize values
+        min_max_scaler = preprocessing.MinMaxScaler()
+        min_max_scaler.fit(data_train)
+        data_train = torch.tensor(min_max_scaler.transform(data_train))
+        data_test = torch.tensor(min_max_scaler.transform(data_test))
 
-    # transform data into DataLoader
-    train_loader = torch.utils.data.DataLoader(missingness_dataset(data_train, C_train, M_train), 
-                        batch_size=args.batch_size, shuffle=True, **kwargs)
-    test_loader = torch.utils.data.DataLoader(missingness_dataset(data_test, C_test, M_test),
-                        batch_size=args.batch_size, shuffle=True, **kwargs)
+        # transform data into DataLoader
+        train_loader = torch.utils.data.DataLoader(missingness_dataset(data_train, C_train, M_train), 
+                            batch_size=args.batch_size, shuffle=True, **kwargs)
+        test_loader = torch.utils.data.DataLoader(missingness_dataset(data_test, C_test, M_test),
+                            batch_size=args.batch_size, shuffle=True, **kwargs)
 
-    # create VAE model
-    device = torch.device("cuda" if args.cuda else "cpu")
-   
-    model = clustered_VAE(input_dim=data_train.shape[1], k=args.k, distinct_hdim=args.distinct_hdim, 
-                            commonencoder_hdim=args.commonencoder_hdim, decoder_hdim=args.decoder_hdim).to(device)
+        # create VAE model
+        device = torch.device("cuda" if args.cuda else "cpu")
 
-    # train and test VAE
-    train_error, reconstruction_train, test_error, reconstruction_test, model = train(model, train_loader, test_loader, device, output_path, args)
+        # hidden layers
+        distinct_hdim = args.distinct_hdim
+        commonencoder_hdim = args.commonencoder_hdim
+        decoder_hdim = args.decoder_hdim
+        m = M_train.shape[1]
+        if m == 5:
+            distinct_hdim = [[3]]*args.k
+            commonencoder_hdim = [[1,1]]
+            decoder_hdim = [3]
+        elif m == 150:
+            distinct_hdim = [[70]]*args.k
+            commonencoder_hdim = [[5,5]]
+            decoder_hdim = [70]
+        elif m > 700:
+            distinct_hdim = [[400]]*args.k
+            commonencoder_hdim = [[20,20]]
+            decoder_hdim = [400]
 
-    # save results
-    split_input = args.input.split('_')
-    with open(os.getcwd() + '/results/table.txt', "a") as myfile:
-        myfile.write(' '.join(split_input[:-2]) + ' & ' + split_input[-2] + ' & ' 
-        + ' '.join(split_input[-1].split('.')[:1]) + ' & ' + str(args.k) + ' & ' + str(EM_train_loss) + ' & ' 
-        + str(EM_test_loss) + ' & ' + str(train_error) + ' & ' + str(test_error) + ' & ' 
-        + str(reconstruction_train) + ' & ' + str(reconstruction_test) + ' \\')
+        model = clustered_VAE(input_dim=data_train.shape[1], k=args.k, distinct_hdim=distinct_hdim, 
+                                commonencoder_hdim=commonencoder_hdim, decoder_hdim=decoder_hdim).to(device)
+
+        # train and test VAE
+        train_error, reconstruction_train, test_error, reconstruction_test, model = train(model, train_loader, test_loader, device, output_path, args)
+
+        # save results
+        split_input = args.input.split('_')
+        with open(os.getcwd() + '/results/table.txt', "a") as myfile:
+            myfile.write(' '.join(split_input[:-2]) + ' & ' + split_input[-2] + ' & ' 
+            + ' '.join(split_input[-1].split('.')[:1]) + ' & ' + f'{args.k}' + ' & ' + f'{EM_train_loss:.4f}' + ' & ' 
+            + f'{EM_test_loss:.4f}' + ' & ' + f'{train_error:.4f}' + ' & ' + f'{test_error:.4f}' + ' & ' 
+            + f'{reconstruction_train:.4f}' + ' & ' + f'{reconstruction_test:.4f}' + ' \\\\')
 
 
 
